@@ -1,0 +1,25 @@
+pub const PresentMode = enum {
+    vsync,
+    immediate,
+    mailbox,
+};
+
+pub const AppConfig = struct {
+    app_name: []const u8,
+    window_title: []const u8,
+    asset_root: []const u8 = "assets",
+    logical_width: u32 = 800,
+    logical_height: u32 = 450,
+    resizable: bool = true,
+    gpu_debug: bool = false,
+    frames_in_flight: u32 = 2,
+    present_mode: PresentMode = .vsync,
+    clear_color: Color = .{ .r = 0.071, .g = 0.125, .b = 0.173, .a = 1.0 },
+};
+
+pub const Color = extern struct {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+};

@@ -43,14 +43,9 @@ pub fn main(init: std.process.Init) !void {
     var renderer = try Renderer.init(allocator, window, assets, app_config);
     defer renderer.deinit();
 
-    const player_texture = try renderer.createTextureFromPixels(&.{
-        255, 203, 92, 255, 255, 203, 92, 255,
-        255, 203, 92, 255, 205, 143, 57, 255,
-    }, 2, 2, 2 * 4);
     var demo_scene = DemoScene.init(
         @floatFromInt(app_config.logical_width),
         @floatFromInt(app_config.logical_height),
-        player_texture,
     );
     var scenes = SceneStack.init(allocator);
     try scenes.replace(Scene.from(DemoScene, &demo_scene));

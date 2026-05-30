@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hammer Forged Games
+// All rights reserved.
+// Licensed under the MIT License - see LICENSE file for details
+
 const core = @import("sdl3_Template");
 const config = @import("config.zig");
 const InputState = @import("input.zig").InputState;

@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hammer Forged Games
+// All rights reserved.
+// Licensed under the MIT License - see LICENSE file for details
+
 const std = @import("std");
 const AssetStore = @import("assets.zig").AssetStore;
 const config = @import("config.zig");

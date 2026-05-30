@@ -1,3 +1,8 @@
+/* Copyright (c) 2026 Hammer Forged Games
+ * All rights reserved.
+ * Licensed under the MIT License - see LICENSE file for details
+*/
+
 #version 450
 
 layout(set = 2, binding = 0) uniform sampler2D sprite_texture;
@@ -10,4 +15,3 @@ layout(location = 0) out vec4 out_color;
 void main() {
     out_color = texture(sprite_texture, in_uv) * in_color;
 }
-

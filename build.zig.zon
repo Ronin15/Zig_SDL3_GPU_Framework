@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hammer Forged Games
+// All rights reserved.
+// Licensed under the MIT License - see LICENSE file for details
+
 .{
     // This is the default name used by packages depending on this one. For
     // example, when a user runs `zig fetch --save <url>`, this field is used
@@ -38,7 +42,7 @@
         "assets",
         "build.zig",
         "build.zig.zon",
+        "LICENSE",
         "src",
-        //"LICENSE",
     },
 }

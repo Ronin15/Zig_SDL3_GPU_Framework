@@ -1,3 +1,8 @@
+/* Copyright (c) 2026 Hammer Forged Games
+ * All rights reserved.
+ * Licensed under the MIT License - see LICENSE file for details
+*/
+
 #version 450
 
 layout(location = 0) in vec2 in_position;
@@ -21,4 +26,3 @@ void main() {
     out_uv = in_uv;
     out_color = in_color;
 }
-

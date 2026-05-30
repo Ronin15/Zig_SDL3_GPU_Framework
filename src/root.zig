@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Hammer Forged Games
+// All rights reserved.
+// Licensed under the MIT License - see LICENSE file for details
+
 //! Reusable game-agnostic helpers for the template.
 
 pub const Vec2 = struct {

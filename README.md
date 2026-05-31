@@ -23,7 +23,7 @@ builds target-native shaders at build time and renders through SDL_GPU.
 
 - Zig 0.16.0 or newer compatible 0.16.x build
 - SDL3 development headers and library discoverable by the compiler/linker
-- SDL3_ttf development headers and library when the debug overlay is enabled
+- SDL3_ttf development headers and library discoverable by the compiler/linker
 - `glslc` for shader compilation during the default build/run/package flow
 - `spirv-cross` for macOS Metal shader generation
 
@@ -36,8 +36,8 @@ Platform package notes:
   Vulkan when the build provides SPIR-V shaders.
 
 Other Linux distributions use different package names, but the required pieces
-are SDL3 development files, optional SDL3_ttf development files, `glslc`, the
-Vulkan loader/headers, and a vendor Mesa or proprietary Vulkan driver.
+are SDL3 and SDL3_ttf development files, `glslc`, the Vulkan loader/headers,
+and a vendor Mesa or proprietary Vulkan driver.
 
 ## Quick Start
 
@@ -107,7 +107,8 @@ Customize app metadata at build time:
 zig build -Dapp-name=my-game -Dwindow-title="My Game"
 ```
 
-Disable the SDL_ttf debug overlay if a target does not ship it:
+Disable the debug overlay feature when you do not want debug UI in a build.
+SDL3_ttf remains a core dependency because game UI text uses the same text path.
 
 ```sh
 zig build -Ddebug-overlay=false

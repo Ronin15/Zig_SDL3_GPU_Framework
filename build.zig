@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
     const gpu_debug = b.option(bool, "gpu-debug", "Enable SDL_GPU debug validation") orelse (optimize == .Debug);
     const shader_compiler = b.option([]const u8, "shader-compiler", "GLSL to SPIR-V compiler") orelse "glslc";
     const shader_cross_compiler = b.option([]const u8, "shader-cross-compiler", "SPIR-V to platform shader compiler") orelse "spirv-cross";
-    const debug_overlay = b.option(bool, "debug-overlay", "Enable SDL_ttf debug overlay support") orelse true;
+    const debug_overlay = b.option(bool, "debug-overlay", "Enable debug overlay rendering") orelse true;
     const gpu_shader_formats = shaderFormatsForTarget(target.result.os.tag);
 
     const build_options = b.addOptions();
@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const exe_mod = createGameModule(b, target, optimize, lib_mod, build_options, debug_overlay);
+    const exe_mod = createGameModule(b, target, optimize, lib_mod, build_options);
 
     const exe = b.addExecutable(.{
         .name = app_name,
@@ -111,7 +111,7 @@ pub fn build(b: *std.Build) void {
         .root_module = pause_controller_unit_tests_mod,
     });
 
-    const exe_unit_tests_mod = createGameModule(b, target, optimize, lib_mod, build_options, debug_overlay);
+    const exe_unit_tests_mod = createGameModule(b, target, optimize, lib_mod, build_options);
     const exe_unit_tests = b.addTest(.{
         .root_module = exe_unit_tests_mod,
     });
@@ -192,13 +192,8 @@ fn createGameModule(
     optimize: std.builtin.OptimizeMode,
     lib_mod: *std.Build.Module,
     build_options: *std.Build.Step.Options,
-    debug_overlay: bool,
 ) *std.Build.Module {
-    const mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/main.zig");
-    if (debug_overlay) {
-        mod.linkSystemLibrary("SDL3_ttf", .{});
-    }
-    return mod;
+    return createSdlModule(b, target, optimize, lib_mod, build_options, "src/main.zig");
 }
 
 fn createSdlModule(
@@ -218,6 +213,7 @@ fn createSdlModule(
     mod.addImport("sdl3_Template", lib_mod);
     mod.addOptions("build_options", build_options);
     mod.linkSystemLibrary("SDL3", .{});
+    mod.linkSystemLibrary("SDL3_ttf", .{});
     return mod;
 }
 

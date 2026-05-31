@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const AssetStore = @import("assets.zig").AssetStore;
+const build_options = @import("build_options");
 const Camera2D = @import("camera.zig").Camera2D;
 const config = @import("config.zig");
 const core = @import("sdl3_Template");
@@ -63,10 +64,16 @@ pub const Renderer = struct {
         assets: AssetStore,
         app_config: config.AppConfig,
     ) !Renderer {
-        const device = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV, app_config.gpu_debug, null) orelse {
+        const device = c.SDL_CreateGPUDevice(@intCast(build_options.gpu_shader_formats), app_config.gpu_debug, null) orelse {
             return sdlError("SDL_CreateGPUDevice");
         };
         errdefer c.SDL_DestroyGPUDevice(device);
+
+        if (c.SDL_GetGPUDeviceDriver(device)) |driver| {
+            std.log.info("SDL_GPU driver: {s}", .{driver});
+        } else {
+            std.log.info("SDL_GPU driver: unknown", .{});
+        }
 
         if (!c.SDL_ClaimWindowForGPUDevice(device, window)) {
             return sdlError("SDL_ClaimWindowForGPUDevice");
@@ -98,7 +105,8 @@ pub const Renderer = struct {
         errdefer c.SDL_ReleaseGPUTransferBuffer(device, vertex_transfer_buffer);
 
         const target_format = c.SDL_GetGPUSwapchainTextureFormat(device, window);
-        const pipeline = try createSpritePipeline(allocator, device, assets, target_format);
+        const shader_set = try selectShaderSet(device);
+        const pipeline = try createSpritePipeline(allocator, device, assets, target_format, shader_set);
         errdefer c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
 
         var renderer = Renderer{
@@ -548,6 +556,13 @@ const FrameUniform = extern struct {
     padding: [2]f32,
 };
 
+const ShaderSet = struct {
+    format: c.SDL_GPUShaderFormat,
+    vertex_path: []const u8,
+    fragment_path: []const u8,
+    entrypoint: [:0]const u8,
+};
+
 fn createSampler(device: *c.SDL_GPUDevice) !*c.SDL_GPUSampler {
     var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
     sampler_info.min_filter = c.SDL_GPU_FILTER_NEAREST;
@@ -585,12 +600,15 @@ fn createSpritePipeline(
     device: *c.SDL_GPUDevice,
     assets: AssetStore,
     target_format: c.SDL_GPUTextureFormat,
+    shader_set: ShaderSet,
 ) !*c.SDL_GPUGraphicsPipeline {
     const vertex_shader = try createShader(
         allocator,
         device,
         assets,
-        "shaders/sprite.vert.spv",
+        shader_set.vertex_path,
+        shader_set.format,
+        shader_set.entrypoint,
         c.SDL_GPU_SHADERSTAGE_VERTEX,
         0,
         0,
@@ -603,7 +621,9 @@ fn createSpritePipeline(
         allocator,
         device,
         assets,
-        "shaders/sprite.frag.spv",
+        shader_set.fragment_path,
+        shader_set.format,
+        shader_set.entrypoint,
         c.SDL_GPU_SHADERSTAGE_FRAGMENT,
         1,
         0,
@@ -674,6 +694,8 @@ fn createShader(
     device: *c.SDL_GPUDevice,
     assets: AssetStore,
     path: []const u8,
+    format: c.SDL_GPUShaderFormat,
+    entrypoint: [:0]const u8,
     stage: c.SDL_GPUShaderStage,
     samplers: u32,
     storage_textures: u32,
@@ -683,12 +705,11 @@ fn createShader(
     const code = try assets.readAlloc(path, max_shader_bytes);
     defer allocator.free(code);
 
-    const entrypoint = "main\x00";
     var shader_info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
     shader_info.code_size = code.len;
     shader_info.code = code.ptr;
     shader_info.entrypoint = entrypoint.ptr;
-    shader_info.format = c.SDL_GPU_SHADERFORMAT_SPIRV;
+    shader_info.format = format;
     shader_info.stage = stage;
     shader_info.num_samplers = samplers;
     shader_info.num_storage_textures = storage_textures;
@@ -706,6 +727,45 @@ fn presentMode(mode: config.PresentMode) c.SDL_GPUPresentMode {
         .immediate => c.SDL_GPU_PRESENTMODE_IMMEDIATE,
         .mailbox => c.SDL_GPU_PRESENTMODE_MAILBOX,
     };
+}
+
+fn selectShaderSet(device: *c.SDL_GPUDevice) error{UnsupportedShaderFormat}!ShaderSet {
+    const device_formats = c.SDL_GetGPUShaderFormats(device);
+    const app_formats: c.SDL_GPUShaderFormat = @intCast(build_options.gpu_shader_formats);
+    return selectShaderSetFromFormats(device_formats, app_formats) catch |err| {
+        std.log.err(
+            "SDL_GPU selected device supports shader formats 0x{x}, but app provides 0x{x}",
+            .{ device_formats, app_formats },
+        );
+        return err;
+    };
+}
+
+fn selectShaderSetFromFormats(
+    device_formats: c.SDL_GPUShaderFormat,
+    app_formats: c.SDL_GPUShaderFormat,
+) error{UnsupportedShaderFormat}!ShaderSet {
+    const usable_formats = device_formats & app_formats;
+
+    if ((usable_formats & c.SDL_GPU_SHADERFORMAT_MSL) != 0) {
+        return .{
+            .format = c.SDL_GPU_SHADERFORMAT_MSL,
+            .vertex_path = "shaders/sprite.vert.msl",
+            .fragment_path = "shaders/sprite.frag.msl",
+            .entrypoint = "main0",
+        };
+    }
+
+    if ((usable_formats & c.SDL_GPU_SHADERFORMAT_SPIRV) != 0) {
+        return .{
+            .format = c.SDL_GPU_SHADERFORMAT_SPIRV,
+            .vertex_path = "shaders/sprite.vert.spv",
+            .fragment_path = "shaders/sprite.frag.spv",
+            .entrypoint = "main",
+        };
+    }
+
+    return error.UnsupportedShaderFormat;
 }
 
 fn spriteCommandLessThan(_: void, lhs: SpriteCommand, rhs: SpriteCommand) bool {
@@ -777,4 +837,33 @@ test "batch builder skips invalid and destroyed texture handles" {
     try std.testing.expectEqual(@as(usize, 0), renderer.draw_groups.items[0].texture.index);
     try std.testing.expectEqual(@as(u32, 0), renderer.draw_groups.items[0].first_vertex);
     try std.testing.expectEqual(@as(u32, 6), renderer.draw_groups.items[0].vertex_count);
+}
+
+test "shader set selection prefers metal shading language when available" {
+    const shader_set = try selectShaderSetFromFormats(
+        c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL,
+        c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL,
+    );
+
+    try std.testing.expectEqual(c.SDL_GPU_SHADERFORMAT_MSL, shader_set.format);
+    try std.testing.expectEqualStrings("shaders/sprite.vert.msl", shader_set.vertex_path);
+    try std.testing.expectEqualStrings("main0", shader_set.entrypoint);
+}
+
+test "shader set selection uses spirv when it is the matching format" {
+    const shader_set = try selectShaderSetFromFormats(
+        c.SDL_GPU_SHADERFORMAT_SPIRV,
+        c.SDL_GPU_SHADERFORMAT_SPIRV,
+    );
+
+    try std.testing.expectEqual(c.SDL_GPU_SHADERFORMAT_SPIRV, shader_set.format);
+    try std.testing.expectEqualStrings("shaders/sprite.vert.spv", shader_set.vertex_path);
+    try std.testing.expectEqualStrings("main", shader_set.entrypoint);
+}
+
+test "shader set selection rejects unsupported format combinations" {
+    try std.testing.expectError(
+        error.UnsupportedShaderFormat,
+        selectShaderSetFromFormats(c.SDL_GPU_SHADERFORMAT_SPIRV, c.SDL_GPU_SHADERFORMAT_MSL),
+    );
 }

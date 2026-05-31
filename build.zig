@@ -4,6 +4,9 @@
 
 const std = @import("std");
 
+const shader_format_spirv: u32 = 1 << 1;
+const shader_format_msl: u32 = 1 << 4;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.option(
@@ -16,12 +19,15 @@ pub fn build(b: *std.Build) void {
     const asset_root = b.option([]const u8, "asset-root", "Runtime asset directory") orelse "assets";
     const gpu_debug = b.option(bool, "gpu-debug", "Enable SDL_GPU debug validation") orelse (optimize == .Debug);
     const shader_compiler = b.option([]const u8, "shader-compiler", "GLSL to SPIR-V compiler") orelse "glslc";
+    const shader_cross_compiler = b.option([]const u8, "shader-cross-compiler", "SPIR-V to platform shader compiler") orelse "spirv-cross";
+    const gpu_shader_formats = shaderFormatsForTarget(target.result.os.tag);
 
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "app_name", app_name);
     build_options.addOption([]const u8, "window_title", window_title);
     build_options.addOption([]const u8, "asset_root", asset_root);
     build_options.addOption(bool, "gpu_debug", gpu_debug);
+    build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
     const lib_mod = b.addModule("sdl3_Template", .{
         .root_source_file = b.path("src/root.zig"),
@@ -97,7 +103,7 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "assets",
     });
 
-    const shader_outputs = addShaderSteps(b, shader_compiler);
+    const shader_outputs = addShaderSteps(b, target.result.os.tag, shader_compiler, shader_cross_compiler);
 
     const check_step = b.step("check", "Compile without installing");
     check_step.dependOn(&exe.step);
@@ -111,7 +117,7 @@ pub fn build(b: *std.Build) void {
         },
     }).step);
 
-    const shaders_step = b.step("shaders", "Compile and install SPIR-V shaders");
+    const shaders_step = b.step("shaders", "Compile and install platform GPU shaders");
     for (shader_outputs.install_steps) |install_step| {
         shaders_step.dependOn(install_step);
         b.getInstallStep().dependOn(install_step);
@@ -185,7 +191,28 @@ const ShaderOutputs = struct {
     install_steps: []const *std.Build.Step,
 };
 
-fn addShaderSteps(b: *std.Build, shader_compiler: []const u8) ShaderOutputs {
+fn shaderFormatsForTarget(os_tag: std.Target.Os.Tag) u32 {
+    return switch (os_tag) {
+        .macos => shader_format_msl,
+        .linux => shader_format_spirv,
+        else => @panic("unsupported SDL_GPU shader target: add shader generation for this OS"),
+    };
+}
+
+fn addShaderSteps(
+    b: *std.Build,
+    os_tag: std.Target.Os.Tag,
+    shader_compiler: []const u8,
+    shader_cross_compiler: []const u8,
+) ShaderOutputs {
+    return switch (os_tag) {
+        .macos => addMslShaderSteps(b, shader_compiler, shader_cross_compiler),
+        .linux => addSpirvShaderSteps(b, shader_compiler),
+        else => @panic("unsupported SDL_GPU shader target: add shader generation for this OS"),
+    };
+}
+
+fn addSpirvShaderSteps(b: *std.Build, shader_compiler: []const u8) ShaderOutputs {
     const allocator = b.allocator;
     const install_steps = allocator.alloc(*std.Build.Step, 2) catch @panic("OOM");
 
@@ -200,6 +227,39 @@ fn addShaderSteps(b: *std.Build, shader_compiler: []const u8) ShaderOutputs {
     frag_cmd.addArg("-o");
     const frag_spv = frag_cmd.addOutputFileArg("sprite.frag.spv");
     install_steps[1] = &b.addInstallBinFile(frag_spv, "assets/shaders/sprite.frag.spv").step;
+
+    return .{ .install_steps = install_steps };
+}
+
+fn addMslShaderSteps(
+    b: *std.Build,
+    shader_compiler: []const u8,
+    shader_cross_compiler: []const u8,
+) ShaderOutputs {
+    const allocator = b.allocator;
+    const install_steps = allocator.alloc(*std.Build.Step, 2) catch @panic("OOM");
+
+    const vert_spv_cmd = b.addSystemCommand(&.{ shader_compiler, "-fshader-stage=vert" });
+    vert_spv_cmd.addFileArg(b.path("assets/shaders/sprite.vert.glsl"));
+    vert_spv_cmd.addArg("-o");
+    const vert_spv = vert_spv_cmd.addOutputFileArg("sprite.vert.spv");
+
+    const vert_msl_cmd = b.addSystemCommand(&.{shader_cross_compiler});
+    vert_msl_cmd.addFileArg(vert_spv);
+    vert_msl_cmd.addArgs(&.{ "--msl", "--stage", "vert", "--output" });
+    const vert_msl = vert_msl_cmd.addOutputFileArg("sprite.vert.msl");
+    install_steps[0] = &b.addInstallBinFile(vert_msl, "assets/shaders/sprite.vert.msl").step;
+
+    const frag_spv_cmd = b.addSystemCommand(&.{ shader_compiler, "-fshader-stage=frag" });
+    frag_spv_cmd.addFileArg(b.path("assets/shaders/sprite.frag.glsl"));
+    frag_spv_cmd.addArg("-o");
+    const frag_spv = frag_spv_cmd.addOutputFileArg("sprite.frag.spv");
+
+    const frag_msl_cmd = b.addSystemCommand(&.{shader_cross_compiler});
+    frag_msl_cmd.addFileArg(frag_spv);
+    frag_msl_cmd.addArgs(&.{ "--msl", "--stage", "frag", "--output" });
+    const frag_msl = frag_msl_cmd.addOutputFileArg("sprite.frag.msl");
+    install_steps[1] = &b.addInstallBinFile(frag_msl, "assets/shaders/sprite.frag.msl").step;
 
     return .{ .install_steps = install_steps };
 }

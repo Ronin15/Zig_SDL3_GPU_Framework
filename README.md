@@ -3,12 +3,12 @@
 A Zig 0.16.0 + SDL3 starter framework for SDL_GPU-first 2D games.
 
 The project uses SDL3 for windowing, input, image loading, and GPU rendering. It
-builds GLSL shaders into SPIR-V at build time and renders through SDL_GPU.
+builds target-native shaders at build time and renders through SDL_GPU.
 
 ## Features
 
 - SDL3 window and event loop
-- SDL_GPU renderer with SPIR-V shaders
+- SDL_GPU renderer with Metal shaders on macOS and SPIR-V shaders on Linux
 - Batched sprite and rectangle drawing
 - Fixed 60Hz update loop with interpolation
 - Vsync-driven rendering with 60Hz fallback pacing when not renderable
@@ -22,9 +22,19 @@ builds GLSL shaders into SPIR-V at build time and renders through SDL_GPU.
 - Zig 0.16.0 or newer compatible 0.16.x build
 - SDL3 development headers and library discoverable by the compiler/linker
 - `glslc` for shader compilation when running, packaging, or verifying shaders
+- `spirv-cross` for macOS Metal shader generation
 
-On Arch Linux, the SDL3 package is `sdl3`. `glslc` is commonly provided by
-`shaderc` or a Vulkan SDK package, depending on platform.
+Platform package notes:
+
+- macOS/Homebrew: install `sdl3`, `shaderc`, and `spirv-cross`. SDL_GPU should
+  select Metal when the build provides MSL shaders.
+- Linux/Arch: install `sdl3`, `shaderc`, `spirv-cross`, `vulkan-headers`,
+  `vulkan-loader`, and a working Vulkan GPU driver. SDL_GPU should select
+  Vulkan when the build provides SPIR-V shaders.
+
+Other Linux distributions use different package names, but the required pieces
+are SDL3 development files, `glslc`, `spirv-cross`, the Vulkan loader/headers,
+and a vendor Mesa or proprietary Vulkan driver.
 
 ## Quick Start
 
@@ -67,7 +77,7 @@ Useful supporting commands:
 
 ```sh
 zig build fmt       # format build.zig and src/
-zig build shaders   # compile GLSL shader sources to SPIR-V
+zig build shaders   # compile GLSL shader sources to platform GPU shaders
 zig build gpu-smoke # create an SDL_GPU device and submit one hidden-window frame
 ```
 
@@ -97,6 +107,7 @@ Use a non-default shader compiler path:
 
 ```sh
 zig build shaders -Dshader-compiler=/path/to/glslc
+zig build shaders -Dshader-cross-compiler=/path/to/spirv-cross
 ```
 
 ## Project Layout
@@ -126,12 +137,16 @@ Generated build output goes under `zig-out/` and should not be committed.
 The app uses SDL_GPU directly and does not call Vulkan APIs itself.
 
 - Shader sources live in `assets/shaders/*.glsl`.
-- `zig build shaders` compiles GLSL to SPIR-V with `glslc`.
-- Compiled shader binaries are installed as
+- `zig build shaders` compiles GLSL to platform-native runtime shader files.
+- On macOS, `glslc` emits temporary SPIR-V and `spirv-cross` converts it to
+  installed MSL files under `zig-out/bin/assets/shaders/*.msl`.
+- On Linux, `glslc` emits installed SPIR-V files under
   `zig-out/bin/assets/shaders/*.spv`.
-- `src/renderer.zig` creates an SDL_GPU device with
-  `SDL_GPU_SHADERFORMAT_SPIRV`.
-- On Linux, SDL_GPU normally selects its Vulkan backend for SPIR-V shaders.
+- `src/renderer.zig` tells SDL which shader formats the app built, passes a
+  null driver name so SDL chooses the backend, then loads the shader files that
+  match `SDL_GetGPUShaderFormats()`.
+- SDL should select Metal on macOS when MSL shaders are available and Vulkan on
+  Linux when SPIR-V shaders are available.
 - Game code should draw through `Renderer` instead of calling SDL_GPU directly.
 - PNG texture loading uses core SDL3 `SDL_LoadPNG`/`SDL_LoadSurface` support;
   this project does not require `SDL3_image`.
@@ -202,13 +217,16 @@ sprite batch via a built-in white texture.
 ## Adding A Shader
 
 Add GLSL source under `assets/shaders/`, extend `addShaderSteps` in `build.zig`,
-and load the resulting `.spv` from `src/renderer.zig`.
+and load the resulting platform shader file from `src/renderer.zig`.
 
-Keep shader resource bindings aligned with SDL_GPU's SPIR-V layout rules:
+Keep shader resource bindings aligned with SDL_GPU's layout rules:
 
 - vertex uniform buffers: set 1
 - fragment sampled textures/samplers: set 2
 - fragment uniform buffers: set 3
+
+The build converts those SPIR-V bindings to SDL-compatible MSL resource
+bindings for macOS through `spirv-cross`.
 
 ## License
 

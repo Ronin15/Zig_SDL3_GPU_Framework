@@ -31,6 +31,8 @@ Follow `zig fmt`; use 4-space indentation and avoid manual alignment that the fo
 
 Prefer small functions with clear ownership of SDL resources. Pair SDL creation calls with `defer` cleanup close to the creation site.
 
+For frame-loop policy, use SDL window flags as current state: throttle visible background windows, but only skip rendering for hidden, minimized, or no-swapchain frames.
+
 ## Testing Guidelines
 
 Use Zig's built-in `test` blocks and `std.testing`. Name tests by behavior, for example `test "player movement clamps to window bounds"`. Put reusable module tests beside the code they cover. Run `zig build test` before submitting changes.

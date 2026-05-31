@@ -34,6 +34,7 @@ pub const Sprite = struct {
     origin: math.Vec2 = .{},
     rotation: f32 = 0,
     layer: i32 = 0,
+    screen_space: bool = false,
 };
 
 pub const FrameResult = enum {
@@ -140,7 +141,7 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
-        _ = c.SDL_WaitForGPUIdle(self.device);
+        self.waitForIdle();
 
         for (self.textures.items) |texture| {
             if (texture.alive) {
@@ -161,6 +162,10 @@ pub const Renderer = struct {
             self.window_claimed = false;
         }
         c.SDL_DestroyGPUDevice(self.device);
+    }
+
+    pub fn waitForIdle(self: *Renderer) void {
+        _ = c.SDL_WaitForGPUIdle(self.device);
     }
 
     pub fn beginFrame(self: *Renderer, clear_color: config.Color) void {
@@ -204,7 +209,11 @@ pub const Renderer = struct {
         };
         defer c.SDL_DestroySurface(loaded);
 
-        const converted = c.SDL_ConvertSurface(loaded, c.SDL_PIXELFORMAT_RGBA32) orelse {
+        return try self.createTextureFromSurface(loaded);
+    }
+
+    pub fn createTextureFromSurface(self: *Renderer, surface: *c.SDL_Surface) !TextureHandle {
+        const converted = c.SDL_ConvertSurface(surface, c.SDL_PIXELFORMAT_RGBA32) orelse {
             return sdlError("SDL_ConvertSurface");
         };
         defer c.SDL_DestroySurface(converted);
@@ -214,13 +223,13 @@ pub const Renderer = struct {
         }
         defer c.SDL_UnlockSurface(converted);
 
-        const pixels_ptr: [*]const u8 = @ptrCast(converted.pixels.?);
-        const pitch: usize = @intCast(converted.pitch);
-        const byte_len = pitch * @as(usize, @intCast(converted.h));
+        const pixels_ptr: [*]const u8 = @ptrCast(converted.*.pixels.?);
+        const pitch: usize = @intCast(converted.*.pitch);
+        const byte_len = pitch * @as(usize, @intCast(converted.*.h));
         return try self.createTextureFromPixels(
             pixels_ptr[0..byte_len],
-            @intCast(converted.w),
-            @intCast(converted.h),
+            @intCast(converted.*.w),
+            @intCast(converted.*.h),
             pitch,
         );
     }
@@ -534,7 +543,7 @@ pub const Renderer = struct {
                 .x = sprite.dest.x + sprite.origin.x + rotated.x,
                 .y = sprite.dest.y + sprite.origin.y + rotated.y,
             };
-            const screen = self.camera.worldToScreen(world);
+            const screen = if (sprite.screen_space) world else self.camera.worldToScreen(world);
             try self.vertices.append(self.allocator, .{
                 .position = .{ screen.x, screen.y },
                 .uv = uv[index],

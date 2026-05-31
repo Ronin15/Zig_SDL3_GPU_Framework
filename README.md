@@ -11,8 +11,10 @@ builds target-native shaders at build time and renders through SDL_GPU.
 - SDL_GPU renderer with Metal shaders on macOS and SPIR-V shaders on Linux
 - Batched sprite and rectangle drawing
 - Fixed 60Hz update loop with interpolation
-- Vsync-driven rendering with 60Hz fallback pacing when not renderable
-- Scene stack for gameplay, menus, tools, and overlays
+- Vsync-driven rendering with 60Hz background throttling
+- F2-toggle FPS overlay rendered with SDL_ttf
+- State stack for gameplay, menus, tools, and overlays
+- Pause state for background, hidden, minimized, or swapchain-unavailable frames
 - Frame-stable input state
 - Runtime asset loading from the installed `assets/` directory
 - GPU smoke executable for checking SDL_GPU device creation
@@ -21,20 +23,21 @@ builds target-native shaders at build time and renders through SDL_GPU.
 
 - Zig 0.16.0 or newer compatible 0.16.x build
 - SDL3 development headers and library discoverable by the compiler/linker
+- SDL3_ttf development headers and library discoverable by the compiler/linker
 - `glslc` for shader compilation during the default build/run/package flow
 - `spirv-cross` for macOS Metal shader generation
 
 Platform package notes:
 
-- macOS/Homebrew: install `sdl3`, `shaderc`, and `spirv-cross`. SDL_GPU should
-  select Metal when the build provides MSL shaders.
-- Linux/Arch: install `sdl3`, `shaderc`, `spirv-cross`, `vulkan-headers`,
-  `vulkan-loader`, and a working Vulkan GPU driver. SDL_GPU should select
-  Vulkan when the build provides SPIR-V shaders.
+- macOS/Homebrew: install `sdl3`, `sdl3_ttf`, `shaderc`, and `spirv-cross`.
+  SDL_GPU should select Metal when the build provides MSL shaders.
+- Linux/Arch: install `sdl3`, `sdl3_ttf`, `shaderc`, `spirv-cross`,
+  `vulkan-headers`, `vulkan-loader`, and a working Vulkan GPU driver. SDL_GPU
+  should select Vulkan when the build provides SPIR-V shaders.
 
 Other Linux distributions use different package names, but the required pieces
-are SDL3 development files, `glslc`, `spirv-cross`, the Vulkan loader/headers,
-and a vendor Mesa or proprietary Vulkan driver.
+are SDL3 and SDL3_ttf development files, `glslc`, `spirv-cross`, the Vulkan
+loader/headers, and a vendor Mesa or proprietary Vulkan driver.
 
 ## Quick Start
 
@@ -123,15 +126,17 @@ zig build shaders -Dshader-cross-compiler=/path/to/spirv-cross
 - `src/main.zig` owns SDL startup, the window, event polling, and the main loop.
 - `src/renderer.zig` owns SDL_GPU device setup, shader loading, texture upload,
   and the batched 2D draw API.
-- `src/scene.zig` defines the push/pop scene stack.
-- `src/demo_scene.zig` contains the initial movable-player scene.
+- `src/state.zig` defines the push/pop state stack.
+- `src/demo_state.zig` contains the initial movable-player state.
+- `src/pause_state.zig` contains the background/inactive pause overlay.
 - `src/input.zig` converts SDL input events into a frame-stable input state.
 - `src/assets.zig` resolves runtime asset paths and loads installed files.
 - `src/camera.zig` contains the 2D camera transform used by the renderer.
 - `src/config.zig` centralizes app/window/GPU configuration.
 - `src/time_loop.zig` provides a fixed-step update loop with interpolation.
 - `src/frame_pacer.zig` coordinates renderability checks and fallback loop
-  pacing for hidden, minimized, occluded, or swapchain-unavailable frames.
+  pacing for hidden, minimized, background, or swapchain-unavailable frames.
+- `src/fps_counter.zig` owns the SDL_ttf-backed debug FPS overlay.
 - `src/root.zig` contains reusable game-agnostic helpers.
 - `assets/` contains runtime assets and shader sources.
 
@@ -164,9 +169,15 @@ GPU vertex buffer per frame, and submitted by texture/layer groups.
 The visible render loop is paced by SDL_GPU swapchain acquisition with the
 default vsync present mode. Simulation remains fixed at 60Hz through
 `TimeLoop`, while rendering may follow higher refresh displays and interpolate
-between fixed updates. When the window is hidden, minimized, occluded, or SDL
-cannot provide a swapchain texture, the app skips GPU rendering and uses
-`SDL_DelayNS` to keep the loop at a 60Hz fallback cadence.
+between fixed updates. Hidden, minimized, or swapchain-unavailable frames skip
+GPU rendering and use `SDL_DelayNS` for a 60Hz fallback cadence. Occluded or
+unfocused visible windows keep rendering but apply the same 60Hz cap to avoid
+background render runaway. These background states push the pause state so
+gameplay stops advancing until the player returns and resumes with Enter or
+Space.
+
+Press F2 to toggle the yellow FPS overlay. It reports render-loop cadence, not
+the fixed update tick rate.
 
 ## Testing
 
@@ -185,30 +196,30 @@ test "player movement clamps to window bounds" {
 }
 ```
 
-## Adding A Scene
+## Adding A State
 
-Create a struct with this shape and push or replace it through `SceneStack`:
+Create a struct with this shape and push or replace it through `StateStack`:
 
 ```zig
-pub fn deinit(self: *MyScene) void {}
-pub fn handleEvent(self: *MyScene, event: *const c.SDL_Event) void {}
-pub fn update(self: *MyScene, input: *const InputState, delta_seconds: f32) void {}
-pub fn render(self: *MyScene, renderer: *Renderer, alpha: f32) !void {}
+pub fn deinit(self: *MyState) void {}
+pub fn handleEvent(self: *MyState, event: *const c.SDL_Event) void {}
+pub fn update(self: *MyState, input: *const InputState, delta_seconds: f32) void {}
+pub fn render(self: *MyState, renderer: *Renderer, alpha: f32) !void {}
 ```
 
-Use `try scenes.push(Scene.from(MyScene, &my_scene))` for overlays and
-`try scenes.replace(...)` for full state changes.
+Use `try states.push(State.from(MyState, &my_state))` for overlays and
+`try states.replace(...)` for full state changes.
 
-`SceneStack` stores borrowed scene pointers. Keep each scene value alive until it
+`StateStack` stores borrowed state pointers. Keep each state value alive until it
 is popped, replaced, or the stack is deinitialized. The starter creates
-`DemoScene` in `main.zig` before the stack and defers stack cleanup first so that
+`DemoState` in `main.zig` before the stack and defers stack cleanup first so that
 the borrowed pointer remains valid.
 
 ## Starting Your Game
 
 This repository is intended to be cloned and edited into a game:
 
-- Rename or replace `src/demo_scene.zig`, then update the `DemoScene` import and
+- Rename or replace `src/demo_state.zig`, then update the `DemoState` import and
   initialization in `src/main.zig`.
 - Set your default app name and window title in `build.zig`, or pass
   `-Dapp-name=... -Dwindow-title=...` while iterating.

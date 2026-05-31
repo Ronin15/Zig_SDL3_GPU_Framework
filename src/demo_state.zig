@@ -8,32 +8,32 @@ const math = @import("math.zig");
 const Renderer = @import("renderer.zig").Renderer;
 const c = @import("sdl.zig").c;
 
-pub const DemoScene = struct {
+pub const DemoState = struct {
     player: Player = .{},
     bounds_width: f32 = 800,
     bounds_height: f32 = 450,
 
-    pub fn init(bounds_width: f32, bounds_height: f32) DemoScene {
+    pub fn init(bounds_width: f32, bounds_height: f32) DemoState {
         return .{
             .bounds_width = bounds_width,
             .bounds_height = bounds_height,
         };
     }
 
-    pub fn deinit(self: *DemoScene) void {
+    pub fn deinit(self: *DemoState) void {
         _ = self;
     }
 
-    pub fn handleEvent(self: *DemoScene, event: *const c.SDL_Event) void {
+    pub fn handleEvent(self: *DemoState, event: *const c.SDL_Event) void {
         _ = self;
         _ = event;
     }
 
-    pub fn update(self: *DemoScene, input: *const InputState, delta_seconds: f32) void {
+    pub fn update(self: *DemoState, input: *const InputState, delta_seconds: f32) void {
         self.player.update(input, delta_seconds, self.bounds_width, self.bounds_height);
     }
 
-    pub fn render(self: *DemoScene, renderer: *Renderer, interpolation_alpha: f32) !void {
+    pub fn render(self: *DemoState, renderer: *Renderer, interpolation_alpha: f32) !void {
         try self.player.render(renderer, interpolation_alpha);
         try renderer.drawRect(.{
             .x = 0,
@@ -138,7 +138,7 @@ const Player = struct {
     }
 };
 
-test "player movement clamps to scene bounds" {
+test "player movement clamps to state bounds" {
     const std = @import("std");
     var player = Player{ .position = .{ .x = 790, .y = -4 }, .previous_position = .{ .x = 790, .y = -4 } };
     const input = InputState{ .right = true, .up = true };

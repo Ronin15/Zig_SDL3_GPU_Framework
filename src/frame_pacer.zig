@@ -27,11 +27,12 @@ pub fn flagsFramePolicy(flags: c.SDL_WindowFlags) FramePolicy {
     const needs_background_cap = !flagsCanRender(flags) or
         (flags & c.SDL_WINDOW_OCCLUDED) != 0 or
         (flags & c.SDL_WINDOW_INPUT_FOCUS) == 0;
+    const should_pause_gameplay = !flagsCanRender(flags);
 
     return .{
         .can_render = flagsCanRender(flags),
         .target_frame_ns = if (needs_background_cap) fallback_frame_ns else null,
-        .should_pause_gameplay = needs_background_cap,
+        .should_pause_gameplay = should_pause_gameplay,
     };
 }
 
@@ -101,17 +102,17 @@ test "occluded windows render with the fallback frame cap" {
 
     try std.testing.expect(policy.can_render);
     try std.testing.expectEqual(@as(?u64, fallback_frame_ns), policy.target_frame_ns);
-    try std.testing.expect(policy.should_pause_gameplay);
+    try std.testing.expect(!policy.should_pause_gameplay);
 }
 
-test "unfocused windows render with the fallback frame cap" {
+test "unfocused windows render with the fallback frame cap without forcing pause" {
     const std = @import("std");
 
     const policy = flagsFramePolicy(0);
 
     try std.testing.expect(policy.can_render);
     try std.testing.expectEqual(@as(?u64, fallback_frame_ns), policy.target_frame_ns);
-    try std.testing.expect(policy.should_pause_gameplay);
+    try std.testing.expect(!policy.should_pause_gameplay);
 }
 
 test "hidden and minimized windows skip rendering with the fallback frame cap" {

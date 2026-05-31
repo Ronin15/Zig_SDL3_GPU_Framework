@@ -91,9 +91,12 @@ pub fn main(init: std.process.Init) !void {
             input.releaseMovement();
             try states.push(State.from(PauseState, &pause_state));
             gameplay_paused = true;
-        } else if (gameplay_paused and input.resume_requested and !frame_policy.should_pause_gameplay) {
-            states.pop();
-            gameplay_paused = false;
+        } else if (gameplay_paused and (input.resume_requested or input.pause_toggle_requested) and !frame_policy.should_pause_gameplay) {
+            resumeGameplay(&states, &gameplay_paused);
+        } else if (!gameplay_paused and input.pause_toggle_requested and !frame_policy.should_pause_gameplay) {
+            input.releaseMovement();
+            try states.push(State.from(PauseState, &pause_state));
+            gameplay_paused = true;
         }
 
         const frame_time_ns = c.SDL_GetTicksNS();
@@ -129,4 +132,9 @@ pub fn main(init: std.process.Init) !void {
             frame_pacer.paceFallbackFrame(frame_start_ns);
         }
     }
+}
+
+fn resumeGameplay(states: *StateStack, gameplay_paused: *bool) void {
+    states.pop();
+    gameplay_paused.* = false;
 }

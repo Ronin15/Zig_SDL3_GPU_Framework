@@ -31,7 +31,7 @@ Follow `zig fmt`; use 4-space indentation and avoid manual alignment that the fo
 
 Prefer small functions with clear ownership of SDL resources. Pair SDL creation calls with `defer` cleanup close to the creation site.
 
-For frame-loop policy, use SDL window flags as current state: throttle visible background windows, but only skip rendering for hidden, minimized, or no-swapchain frames.
+For frame-loop policy, use SDL window flags as current state: throttle visible background windows, but only skip rendering or force pause for hidden, minimized, or no-swapchain frames.
 
 ## Testing Guidelines
 

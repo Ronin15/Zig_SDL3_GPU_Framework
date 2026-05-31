@@ -170,11 +170,11 @@ The visible render loop is paced by SDL_GPU swapchain acquisition with the
 default vsync present mode. Simulation remains fixed at 60Hz through
 `TimeLoop`, while rendering may follow higher refresh displays and interpolate
 between fixed updates. Hidden, minimized, or swapchain-unavailable frames skip
-GPU rendering and use `SDL_DelayNS` for a 60Hz fallback cadence. Occluded or
-unfocused visible windows keep rendering but apply the same 60Hz cap to avoid
-background render runaway. These background states push the pause state so
-gameplay stops advancing until the player returns and resumes with Enter or
-Space.
+GPU rendering, use `SDL_DelayNS` for a 60Hz fallback cadence, and push the pause
+state. Occluded or unfocused visible windows keep rendering but apply the same
+60Hz cap to avoid background render runaway. Press P during active play to
+toggle the pause state; forced pause resumes with P, Enter, or Space after the
+window is visible again.
 
 Press F2 to toggle the yellow FPS overlay. It reports render-loop cadence, not
 the fixed update tick rate.

@@ -11,11 +11,13 @@ pub const InputState = struct {
     down: bool = false,
     quit_requested: bool = false,
     fps_toggle_requested: bool = false,
+    pause_toggle_requested: bool = false,
     resume_requested: bool = false,
 
     pub fn beginFrame(self: *InputState) void {
         self.quit_requested = false;
         self.fps_toggle_requested = false;
+        self.pause_toggle_requested = false;
         self.resume_requested = false;
     }
 
@@ -47,6 +49,7 @@ pub const InputState = struct {
             c.SDLK_S => self.down = pressed,
             c.SDLK_ESCAPE => self.quit_requested = pressed and !repeat,
             c.SDLK_F2 => self.fps_toggle_requested = pressed and !repeat,
+            c.SDLK_P => self.pause_toggle_requested = pressed and !repeat,
             c.SDLK_RETURN, c.SDLK_SPACE => self.resume_requested = pressed and !repeat,
             else => {},
         }
@@ -83,14 +86,17 @@ test "input maps non-repeated key down events to frame commands" {
     var input = InputState{};
 
     input.handleKey(c.SDLK_F2, true, false);
+    input.handleKey(c.SDLK_P, true, false);
     input.handleKey(c.SDLK_ESCAPE, true, false);
     input.handleKey(c.SDLK_RETURN, true, false);
     try std.testing.expect(input.fps_toggle_requested);
+    try std.testing.expect(input.pause_toggle_requested);
     try std.testing.expect(input.quit_requested);
     try std.testing.expect(input.resume_requested);
 
     input.beginFrame();
     try std.testing.expect(!input.fps_toggle_requested);
+    try std.testing.expect(!input.pause_toggle_requested);
     try std.testing.expect(!input.quit_requested);
     try std.testing.expect(!input.resume_requested);
 }
@@ -100,10 +106,12 @@ test "input ignores repeated command keys" {
     var input = InputState{};
 
     input.handleKey(c.SDLK_F2, true, true);
+    input.handleKey(c.SDLK_P, true, true);
     input.handleKey(c.SDLK_ESCAPE, true, true);
     input.handleKey(c.SDLK_RETURN, true, true);
 
     try std.testing.expect(!input.fps_toggle_requested);
+    try std.testing.expect(!input.pause_toggle_requested);
     try std.testing.expect(!input.quit_requested);
     try std.testing.expect(!input.resume_requested);
 }

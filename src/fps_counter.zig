@@ -13,6 +13,17 @@ const font_size: f32 = 18;
 const overlay_layer: i32 = 10_000;
 const bytes_per_pixel = 4;
 
+const system_font_paths = [_][:0]const u8{
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu-sans-fonts/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+    "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+};
+
 pub const FpsCounter = struct {
     font: ?*c.TTF_Font = null,
     ttf_initialized: bool = false,
@@ -144,15 +155,7 @@ pub const FpsCounter = struct {
 };
 
 fn openSystemFont() !*c.TTF_Font {
-    const paths = [_][:0]const u8{
-        "/System/Library/Fonts/SFNSMono.ttf",
-        "/System/Library/Fonts/Menlo.ttc",
-        "/Library/Fonts/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSansMono.ttf",
-    };
-
-    for (paths) |path| {
+    for (system_font_paths) |path| {
         if (c.TTF_OpenFont(path.ptr, font_size)) |font| {
             return font;
         }
@@ -164,4 +167,18 @@ fn openSystemFont() !*c.TTF_Font {
 fn ttfError(comptime operation: []const u8) error{SdlError} {
     std.log.err("{s} failed: {s}", .{ operation, c.SDL_GetError() });
     return error.SdlError;
+}
+
+test "system font paths include common Linux monospace locations" {
+    try std.testing.expect(hasSystemFontPath("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"));
+    try std.testing.expect(hasSystemFontPath("/usr/share/fonts/TTF/DejaVuSansMono.ttf"));
+    try std.testing.expect(hasSystemFontPath("/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf"));
+    try std.testing.expect(hasSystemFontPath("/usr/share/fonts/noto/NotoSansMono-Regular.ttf"));
+}
+
+fn hasSystemFontPath(expected: []const u8) bool {
+    for (system_font_paths) |path| {
+        if (std.mem.eql(u8, path, expected)) return true;
+    }
+    return false;
 }

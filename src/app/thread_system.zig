@@ -128,6 +128,7 @@ pub const ThreadSystem = struct {
         };
 
         if (self.workers.len == 0 or item_count < self.config.min_parallel_items or range_count <= 1) {
+            stats.background_worker_count = 0;
             runInline(item_count, grain_size, context, job_fn, &stats);
             return stats;
         }
@@ -378,6 +379,7 @@ test "small batches run inline even when background workers exist" {
     const stats = threads.parallelFor(hits.len, &context, markCoverage);
 
     try std.testing.expect(stats.ran_inline);
+    try std.testing.expectEqual(@as(usize, 0), stats.background_worker_count);
     try std.testing.expectEqual(@as(usize, 0), stats.background_worker_ranges);
     for (&hits) |*hit| {
         try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));

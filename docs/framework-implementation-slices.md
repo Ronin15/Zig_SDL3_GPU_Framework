@@ -25,6 +25,9 @@ Current foundation:
 - `InputState` tracks held gameplay actions.
 - `FrameCommands` tracks one-frame commands.
 - `input_router.zig` defines context-oriented routing contracts.
+- Current pause behavior intentionally resets gameplay movement; this slice should
+  decide how key-down/key-up events received while gameplay input is blocked
+  reconcile with held movement on resume.
 
 Checklist:
 
@@ -56,6 +59,9 @@ Current foundation:
 - `AppConfig` has `logical_width`, `logical_height`, and `resizable`.
 - `resolution.zig` defines logical size, scale mode, and viewport math.
 - Renderer currently uses swapchain size directly.
+- Current drawing uses logical 1280x720-style coordinates but normalizes them
+  against the acquired swapchain size, so high-DPI or future resize behavior
+  needs an explicit viewport policy before real UI depends on it.
 
 Checklist:
 

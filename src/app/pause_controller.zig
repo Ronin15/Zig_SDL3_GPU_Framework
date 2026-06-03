@@ -29,6 +29,13 @@ pub const PauseController = struct {
         return self.handle != null;
     }
 
+    pub fn reconcileWithStateStack(self: *PauseController, states: *const StateStack) void {
+        const handle = self.handle orelse return;
+        if (!states.contains(handle)) {
+            self.handle = null;
+        }
+    }
+
     pub fn enter(
         self: *PauseController,
         states: *StateStack,
@@ -181,4 +188,51 @@ test "pause controller applies forced pause policy once" {
     try std.testing.expect(pause.isPaused());
     try std.testing.expectEqual(@as(usize, 2), states.len());
     try std.testing.expectEqual(@as(u64, 10), time_loop.last_time_ns);
+}
+
+test "pause controller clears stale handle after stack replacement" {
+    const std = @import("std");
+
+    const TestingState = struct {
+        pub fn handleEvent(self: *@This(), event: *const @import("../platform/sdl.zig").c.SDL_Event, transitions: *StateTransitions) !bool {
+            _ = self;
+            _ = event;
+            _ = transitions;
+            return false;
+        }
+
+        pub fn update(self: *@This(), context: UpdateContext) !void {
+            _ = self;
+            _ = context;
+        }
+
+        pub fn render(self: *@This(), context: RenderContext) !void {
+            _ = self;
+            _ = context;
+        }
+
+        pub fn onPause(self: *@This()) void {
+            _ = self;
+        }
+
+        pub fn deinit(self: *@This()) void {
+            _ = self;
+        }
+    };
+
+    var input = InputState{};
+    var time_loop = TimeLoop.init(0);
+    var states = StateStack.init(std.testing.allocator);
+    defer states.deinit();
+    _ = try states.replaceGameplay(TestingState, .{});
+    var pause = PauseController.init(800, 450);
+
+    try pause.enter(&states, &input, &time_loop, 10);
+    try std.testing.expect(pause.isPaused());
+
+    _ = try states.replaceGameplay(TestingState, .{});
+    pause.reconcileWithStateStack(&states);
+
+    try std.testing.expect(!pause.isPaused());
+    try std.testing.expectEqual(@as(usize, 1), states.len());
 }

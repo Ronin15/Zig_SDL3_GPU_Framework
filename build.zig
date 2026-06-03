@@ -71,12 +71,13 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
-    b.installDirectory(.{
+    const assets_install = b.addInstallDirectory(.{
         .source_dir = b.path("assets"),
         .install_dir = .bin,
         .install_subdir = asset_root,
         .exclude_extensions = &.{ ".glsl", ".spv", ".msl", ".gitkeep" },
     });
+    b.getInstallStep().dependOn(&assets_install.step);
 
     const shader_outputs = addShaderSteps(b, target.result.os.tag, shader_compiler, shader_cross_compiler, asset_root);
 
@@ -122,7 +123,10 @@ pub fn build(b: *std.Build) void {
     const gpu_smoke_run = b.addRunArtifact(gpu_smoke_exe);
     const gpu_smoke_install = b.addInstallArtifact(gpu_smoke_exe, .{});
     gpu_smoke_run.step.dependOn(&gpu_smoke_install.step);
-    gpu_smoke_run.step.dependOn(b.getInstallStep());
+    gpu_smoke_run.step.dependOn(&assets_install.step);
+    for (shader_outputs.install_steps) |install_step| {
+        gpu_smoke_run.step.dependOn(install_step);
+    }
     gpu_smoke_run.setCwd(.{ .cwd_relative = b.getInstallPath(.bin, "") });
     const gpu_smoke_step = b.step("gpu-smoke", "Create an SDL_GPU device and submit one frame");
     gpu_smoke_step.dependOn(&gpu_smoke_run.step);

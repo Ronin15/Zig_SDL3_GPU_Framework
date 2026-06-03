@@ -13,6 +13,7 @@ const c = sdl.c;
 
 const max_shader_bytes = 1024 * 1024;
 const initial_batch_vertices = 4096 * 6;
+const initial_batch_commands = initial_batch_vertices / 6;
 const bytes_per_pixel = 4;
 
 pub const TextureHandle = struct {
@@ -134,6 +135,8 @@ pub const Renderer = struct {
             .vertex_transfer_buffer = vertex_transfer_buffer,
             .batch_capacity_vertices = initial_batch_vertices,
         };
+        try renderer.reserveBatchStorage(initial_batch_commands, initial_batch_vertices, initial_batch_commands);
+        errdefer renderer.deinitBatchStorage();
 
         const white_pixel = [_]u8{ 255, 255, 255, 255 };
         renderer.white_texture = try renderer.createTextureFromPixels(white_pixel[0..], 1, 1, bytes_per_pixel);
@@ -149,9 +152,7 @@ pub const Renderer = struct {
             }
         }
         self.textures.deinit(self.allocator);
-        self.commands.deinit(self.allocator);
-        self.vertices.deinit(self.allocator);
-        self.draw_groups.deinit(self.allocator);
+        self.deinitBatchStorage();
 
         c.SDL_ReleaseGPUTransferBuffer(self.device, self.vertex_transfer_buffer);
         c.SDL_ReleaseGPUBuffer(self.device, self.vertex_buffer);
@@ -444,13 +445,33 @@ pub const Renderer = struct {
             return sdlError("SDL_SubmitGPUCommandBuffer");
         }
         command_submitted = true;
-        _ = c.SDL_WaitForGPUIdle(self.device);
 
         return .{
             .texture = texture,
             .width = width,
             .height = height,
         };
+    }
+
+    fn reserveBatchStorage(
+        self: *Renderer,
+        command_capacity: usize,
+        vertex_capacity: usize,
+        draw_group_capacity: usize,
+    ) !void {
+        errdefer self.deinitBatchStorage();
+        try self.commands.ensureTotalCapacity(self.allocator, command_capacity);
+        try self.vertices.ensureTotalCapacity(self.allocator, vertex_capacity);
+        try self.draw_groups.ensureTotalCapacity(self.allocator, draw_group_capacity);
+    }
+
+    fn deinitBatchStorage(self: *Renderer) void {
+        self.commands.deinit(self.allocator);
+        self.vertices.deinit(self.allocator);
+        self.draw_groups.deinit(self.allocator);
+        self.commands = .empty;
+        self.vertices = .empty;
+        self.draw_groups = .empty;
     }
 
     fn ensureBatchCapacity(self: *Renderer, needed_vertices: usize) !void {
@@ -952,6 +973,44 @@ test "batch builder skips invalid and destroyed texture handles" {
     try std.testing.expectEqual(@as(usize, 0), renderer.draw_groups.items[0].texture.index);
     try std.testing.expectEqual(@as(u32, 0), renderer.draw_groups.items[0].first_vertex);
     try std.testing.expectEqual(@as(u32, 6), renderer.draw_groups.items[0].vertex_count);
+}
+
+test "warmed sprite batch prep does not allocate" {
+    const allocator = std.testing.allocator;
+    var renderer = Renderer{
+        .allocator = allocator,
+        .device = undefined,
+        .window = undefined,
+        .pipeline = undefined,
+        .sampler = undefined,
+        .vertex_buffer = undefined,
+        .vertex_transfer_buffer = undefined,
+        .batch_capacity_vertices = 0,
+    };
+    defer renderer.textures.deinit(allocator);
+    defer renderer.deinitBatchStorage();
+
+    try renderer.textures.append(allocator, .{
+        .texture = @ptrFromInt(1),
+        .width = 1,
+        .height = 1,
+    });
+    try renderer.reserveBatchStorage(1, 6, 1);
+
+    var failing_allocator = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    renderer.allocator = failing_allocator.allocator();
+    defer renderer.allocator = allocator;
+
+    renderer.beginFrame(.{ .r = 0, .g = 0, .b = 0, .a = 1 });
+    try renderer.drawSprite(.{
+        .texture = .{ .index = 0 },
+        .dest = .{ .x = 0, .y = 0, .w = 1, .h = 1 },
+    });
+    try renderer.prepareFrameCommands();
+
+    try std.testing.expectEqual(@as(usize, 1), renderer.commands.items.len);
+    try std.testing.expectEqual(@as(usize, 6), renderer.vertices.items.len);
+    try std.testing.expectEqual(@as(usize, 1), renderer.draw_groups.items.len);
 }
 
 test "shader set selection prefers metal shading language when available" {

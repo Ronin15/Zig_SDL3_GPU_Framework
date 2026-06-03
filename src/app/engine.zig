@@ -201,6 +201,7 @@ pub const Engine = struct {
 
     fn applyTransitions(self: *Engine) !void {
         const result = try self.states.applyTransitions(&self.transitions);
+        self.pause.reconcileWithStateStack(&self.states);
         if (result.quit_requested) {
             self.running = false;
         }

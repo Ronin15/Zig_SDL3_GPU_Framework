@@ -130,23 +130,19 @@ zig build shaders -Dshader-cross-compiler=/path/to/spirv-cross
   install steps.
 - `build.zig.zon` contains package metadata.
 - `src/main.zig` owns the executable entry point and high-level fixed-step timing loop.
-- `src/engine.zig` owns SDL startup, the window, event polling, and event/update/render coordination through the state stack.
-- `src/sdl.zig` owns SDL startup and shared C imports.
-- `src/renderer.zig` owns SDL_GPU device setup, shader loading, texture upload,
-  and the batched 2D draw API.
-- `src/state.zig` defines the owned state stack, stack policies, and queued transitions.
-- `src/demo_state.zig` contains the temporary startup state for the template.
-- `src/pause_state.zig` contains the background/inactive pause overlay.
-- `src/pause_controller.zig` owns pause enter/exit behavior and forced pause handling.
-- `src/input.zig` maps SDL key events to held input actions and latched frame commands.
-- `src/debug_overlay.zig` owns debug-only overlay state.
-- `src/assets.zig` resolves runtime asset paths and loads installed files.
-- `src/camera.zig` contains the 2D camera transform used by the renderer.
+- `src/app/` owns app coordination, input, timing, frame pacing, pause policy,
+  and the owned state stack.
+- `src/render/` owns SDL_GPU rendering, camera transforms, the FPS counter, and
+  debug overlay rendering.
+- `src/game/` contains game/application states such as the temporary demo and
+  pause overlay.
+- `src/platform/` contains SDL startup/shared C imports and platform helper
+  implementations.
+- `src/assets/` resolves runtime asset paths and loads installed files.
+- `src/core/` contains small reusable helpers such as math primitives.
 - `src/config.zig` centralizes app/window/GPU configuration.
-- `src/time_loop.zig` provides a fixed-step update loop with interpolation.
-- `src/frame_pacer.zig` coordinates renderability checks and fallback loop
-  pacing for hidden, minimized, background, or swapchain-unavailable frames.
-- `src/fps_counter.zig` owns the FPS counter for the debug overlay.
+- `src/gpu_smoke.zig` is the executable wrapper for the platform smoke test.
+- `src/tests.zig` imports modules for aggregate unit-test coverage.
 - `src/root.zig` contains reusable game-agnostic helpers.
 - `assets/` contains runtime assets and shader sources.
 
@@ -162,7 +158,7 @@ The app uses SDL_GPU directly and does not call Vulkan APIs itself.
   installed MSL files under `zig-out/bin/assets/shaders/*.msl`.
 - On Linux, `glslc` emits installed SPIR-V files under
   `zig-out/bin/assets/shaders/*.spv`.
-- `src/renderer.zig` tells SDL which shader formats the app built, passes a
+- `src/render/renderer.zig` tells SDL which shader formats the app built, passes a
   null driver name so SDL chooses the backend, then loads the shader files that
   match `SDL_GetGPUShaderFormats()`.
 - SDL should select Metal on macOS when MSL shaders are available and Vulkan on
@@ -253,7 +249,7 @@ current event or update dispatch completes.
 
 ## Input Model
 
-Keyboard input maps to named `Action` values in `src/input.zig`. Gameplay code
+Keyboard input maps to named `Action` values in `src/app/input.zig`. Gameplay code
 reads held actions through `InputState`, while app-level commands such as pause,
 resume, quit, and debug overlay toggle are latched for one frame through
 `FrameCommands`.
@@ -265,8 +261,8 @@ resume, Escape for quit, and F2 for the debug overlay.
 
 This repository is intended to be cloned and edited into a game:
 
-- Rename or replace `src/demo_state.zig`, then update the startup-state
-  bootstrap in `src/engine.zig`. A real game will usually replace the demo
+- Rename or replace `src/game/demo_state.zig`, then update the startup-state
+  bootstrap in `src/app/engine.zig`. A real game will usually replace the demo
   with a `MainMenuState` that transitions into gameplay.
 - Set your default app name and window title in `build.zig`, or pass
   `-Dapp-name=... -Dwindow-title=...` while iterating.
@@ -300,7 +296,7 @@ sprite batch via a built-in white texture.
 ## Adding A Shader
 
 Add GLSL source under `assets/shaders/`, extend `addShaderSteps` in `build.zig`,
-and load the resulting platform shader file from `src/renderer.zig`.
+and load the resulting platform shader file from `src/render/renderer.zig`.
 
 Keep shader resource bindings aligned with SDL_GPU's layout rules:
 

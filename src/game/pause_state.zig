@@ -2,11 +2,11 @@
 // All rights reserved.
 // Licensed under the MIT License - see LICENSE file for details
 
-const config = @import("config.zig");
-const InputState = @import("input.zig").InputState;
-const Renderer = @import("renderer.zig").Renderer;
-const StateTransitions = @import("state.zig").StateTransitions;
-const c = @import("sdl.zig").c;
+const config = @import("../config.zig");
+const InputState = @import("../app/input.zig").InputState;
+const Renderer = @import("../render/renderer.zig").Renderer;
+const StateTransitions = @import("../app/state.zig").StateTransitions;
+const c = @import("../platform/sdl.zig").c;
 
 pub const PauseState = struct {
     width: f32,
@@ -72,7 +72,7 @@ pub const PauseState = struct {
     }
 };
 
-fn drawScreenRect(renderer: *Renderer, rect: @import("renderer.zig").Rect, color: config.Color, layer: i32) !void {
+fn drawScreenRect(renderer: *Renderer, rect: @import("../render/renderer.zig").Rect, color: config.Color, layer: i32) !void {
     try renderer.drawSprite(.{
         .texture = renderer.white_texture,
         .dest = rect,

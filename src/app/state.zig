@@ -4,8 +4,8 @@
 
 const std = @import("std");
 const InputState = @import("input.zig").InputState;
-const Renderer = @import("renderer.zig").Renderer;
-const c = @import("sdl.zig").c;
+const Renderer = @import("../render/renderer.zig").Renderer;
+const c = @import("../platform/sdl.zig").c;
 
 pub const StateHandle = struct {
     id: u64,

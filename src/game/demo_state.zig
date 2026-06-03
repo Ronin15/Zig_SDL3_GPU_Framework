@@ -2,12 +2,12 @@
 // All rights reserved.
 // Licensed under the MIT License - see LICENSE file for details
 
-const config = @import("config.zig");
-const InputState = @import("input.zig").InputState;
-const math = @import("math.zig");
-const Renderer = @import("renderer.zig").Renderer;
-const StateTransitions = @import("state.zig").StateTransitions;
-const c = @import("sdl.zig").c;
+const config = @import("../config.zig");
+const InputState = @import("../app/input.zig").InputState;
+const math = @import("../core/math.zig");
+const Renderer = @import("../render/renderer.zig").Renderer;
+const StateTransitions = @import("../app/state.zig").StateTransitions;
+const c = @import("../platform/sdl.zig").c;
 
 pub const DemoState = struct {
     player: Player = .{},
@@ -114,7 +114,7 @@ const Player = struct {
         self.previous_position = self.position;
     }
 
-    fn markerRect(position: math.Vec2, facing: Direction) @import("renderer.zig").Rect {
+    fn markerRect(position: math.Vec2, facing: Direction) @import("../render/renderer.zig").Rect {
         const centered_offset = (size - marker_length) * 0.5;
 
         return switch (facing) {

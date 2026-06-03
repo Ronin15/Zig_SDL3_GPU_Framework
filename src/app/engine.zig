@@ -3,24 +3,24 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const AssetStore = @import("assets.zig").AssetStore;
+const AssetStore = @import("../assets/assets.zig").AssetStore;
 const build_options = @import("build_options");
-const config = @import("config.zig");
-const DebugOverlay = if (build_options.debug_overlay) @import("debug_overlay.zig").DebugOverlay else @import("debug_overlay_stub.zig").DebugOverlay;
-const DemoState = @import("demo_state.zig").DemoState;
+const config = @import("../config.zig");
+const DebugOverlay = if (build_options.debug_overlay) @import("../render/debug_overlay.zig").DebugOverlay else @import("../render/debug_overlay_stub.zig").DebugOverlay;
+const DemoState = @import("../game/demo_state.zig").DemoState;
 const frame_pacer = @import("frame_pacer.zig");
 const input_mod = @import("input.zig");
 const Action = input_mod.Action;
 const FrameCommands = input_mod.FrameCommands;
 const InputState = input_mod.InputState;
 const PauseController = @import("pause_controller.zig").PauseController;
-const PauseState = @import("pause_state.zig").PauseState;
-const Renderer = @import("renderer.zig").Renderer;
+const PauseState = @import("../game/pause_state.zig").PauseState;
+const Renderer = @import("../render/renderer.zig").Renderer;
 const state_mod = @import("state.zig");
 const StateStack = state_mod.StateStack;
 const StateTransitions = state_mod.StateTransitions;
 const TimeLoop = @import("time_loop.zig").TimeLoop;
-const sdl = @import("sdl.zig");
+const sdl = @import("../platform/sdl.zig");
 const c = sdl.c;
 
 pub const Engine = struct {

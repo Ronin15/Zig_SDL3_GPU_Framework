@@ -4,7 +4,7 @@
 
 //! Reusable game-agnostic helpers for the template.
 
-const math = @import("math.zig");
+const math = @import("core/math.zig");
 
 pub const Vec2 = math.Vec2;
 pub const clamp = math.clamp;

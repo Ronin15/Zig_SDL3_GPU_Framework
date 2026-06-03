@@ -4,7 +4,7 @@
 
 const FramePolicy = @import("frame_pacer.zig").FramePolicy;
 const InputState = @import("input.zig").InputState;
-const PauseState = @import("pause_state.zig").PauseState;
+const PauseState = @import("../game/pause_state.zig").PauseState;
 const StateHandle = @import("state.zig").StateHandle;
 const StateStack = @import("state.zig").StateStack;
 const TimeLoop = @import("time_loop.zig").TimeLoop;
@@ -74,7 +74,7 @@ test "pause controller enter and exit are idempotent" {
     const TestingState = struct {
         pause_count: *u32,
 
-        pub fn handleEvent(self: *@This(), event: *const @import("sdl.zig").c.SDL_Event, transitions: *@import("state.zig").StateTransitions) !bool {
+        pub fn handleEvent(self: *@This(), event: *const @import("../platform/sdl.zig").c.SDL_Event, transitions: *@import("state.zig").StateTransitions) !bool {
             _ = self;
             _ = event;
             _ = transitions;
@@ -88,7 +88,7 @@ test "pause controller enter and exit are idempotent" {
             _ = transitions;
         }
 
-        pub fn render(self: *@This(), renderer: *@import("renderer.zig").Renderer, interpolation_alpha: f32) !void {
+        pub fn render(self: *@This(), renderer: *@import("../render/renderer.zig").Renderer, interpolation_alpha: f32) !void {
             _ = self;
             _ = renderer;
             _ = interpolation_alpha;
@@ -136,7 +136,7 @@ test "pause controller applies forced pause policy once" {
     const std = @import("std");
 
     const TestingState = struct {
-        pub fn handleEvent(self: *@This(), event: *const @import("sdl.zig").c.SDL_Event, transitions: *@import("state.zig").StateTransitions) !bool {
+        pub fn handleEvent(self: *@This(), event: *const @import("../platform/sdl.zig").c.SDL_Event, transitions: *@import("state.zig").StateTransitions) !bool {
             _ = self;
             _ = event;
             _ = transitions;
@@ -150,7 +150,7 @@ test "pause controller applies forced pause policy once" {
             _ = transitions;
         }
 
-        pub fn render(self: *@This(), renderer: *@import("renderer.zig").Renderer, interpolation_alpha: f32) !void {
+        pub fn render(self: *@This(), renderer: *@import("../render/renderer.zig").Renderer, interpolation_alpha: f32) !void {
             _ = self;
             _ = renderer;
             _ = interpolation_alpha;

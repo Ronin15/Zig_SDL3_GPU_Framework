@@ -54,66 +54,9 @@ pub fn build(b: *std.Build) void {
         .root_module = gpu_smoke_mod,
     });
 
-    const root_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    const assets_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/assets.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    const camera_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/camera.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    const input_unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/input.zig");
-    const input_unit_tests = b.addTest(.{
-        .root_module = input_unit_tests_mod,
-    });
-
-    const state_unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/state.zig");
-    const state_unit_tests = b.addTest(.{
-        .root_module = state_unit_tests_mod,
-    });
-
-    const frame_pacer_unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/frame_pacer.zig");
-    const frame_pacer_unit_tests = b.addTest(.{
-        .root_module = frame_pacer_unit_tests_mod,
-    });
-
-    const time_loop_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/time_loop.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-
-    const renderer_unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/renderer.zig");
-    const renderer_unit_tests = b.addTest(.{
-        .root_module = renderer_unit_tests_mod,
-    });
-
-    const pause_controller_unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/pause_controller.zig");
-    const pause_controller_unit_tests = b.addTest(.{
-        .root_module = pause_controller_unit_tests_mod,
-    });
-
-    const exe_unit_tests_mod = createGameModule(b, target, optimize, lib_mod, build_options);
-    const exe_unit_tests = b.addTest(.{
-        .root_module = exe_unit_tests_mod,
+    const unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/tests.zig");
+    const unit_tests = b.addTest(.{
+        .root_module = unit_tests_mod,
     });
 
     b.installArtifact(exe);
@@ -158,16 +101,7 @@ pub fn build(b: *std.Build) void {
     dev_step.dependOn(&run_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&b.addRunArtifact(root_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(assets_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(camera_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(input_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(state_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(frame_pacer_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(time_loop_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(renderer_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(pause_controller_unit_tests).step);
-    test_step.dependOn(&b.addRunArtifact(exe_unit_tests).step);
+    test_step.dependOn(&b.addRunArtifact(unit_tests).step);
 
     const verify_step = b.step("verify", "Run non-interactive checks for local development");
     verify_step.dependOn(check_step);

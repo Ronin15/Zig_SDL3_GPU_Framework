@@ -5,8 +5,8 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const config = @import("config.zig");
-const Engine = @import("engine.zig").Engine;
-const TimeLoop = @import("time_loop.zig").TimeLoop;
+const Engine = @import("app/engine.zig").Engine;
+const TimeLoop = @import("app/time_loop.zig").TimeLoop;
 
 pub fn main(init: std.process.Init) !void {
     const app_config = config.AppConfig{

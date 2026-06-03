@@ -147,7 +147,7 @@ zig build shaders -Dshader-cross-compiler=/path/to/spirv-cross
 - `src/config.zig` centralizes app/window/GPU configuration.
 - `src/gpu_smoke.zig` is the executable wrapper for the platform smoke test.
 - `src/tests.zig` imports modules for aggregate unit-test coverage.
-- `src/root.zig` contains reusable game-agnostic helpers.
+- `src/root.zig` is the minimal package root for shared starter helpers and tests.
 - `assets/` contains runtime assets and shader sources.
 
 Generated build output goes under `zig-out/` and should not be committed.
@@ -272,8 +272,8 @@ This repository is intended to be cloned and edited into a game:
   `-Dapp-name=... -Dwindow-title=...` while iterating.
 - Put reusable gameplay modules under `src/` and keep SDL/GPU ownership in
   `engine.zig` and `renderer.zig` unless you have a reason to split it further.
-- When you publish a fork as a distinct package, regenerate the
-  `build.zig.zon` fingerprint per Zig's package identity guidance.
+- When a clone becomes a distinct project, rename it and regenerate the
+  `build.zig.zon` fingerprint.
 
 ## Adding Art
 

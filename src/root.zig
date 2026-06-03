@@ -2,7 +2,7 @@
 // All rights reserved.
 // Licensed under the MIT License - see LICENSE file for details
 
-//! Reusable game-agnostic helpers for the template.
+//! Minimal package root for shared starter helpers and tests.
 
 const math = @import("core/math.zig");
 

@@ -27,26 +27,20 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "debug_overlay", debug_overlay);
     build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
-    const lib_mod = b.addModule("sdl3_Template", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const exe_mod = createGameModule(b, target, optimize, lib_mod, build_options);
+    const exe_mod = createGameModule(b, target, optimize, build_options);
 
     const exe = b.addExecutable(.{
         .name = app_name,
         .root_module = exe_mod,
     });
 
-    const gpu_smoke_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/gpu_smoke.zig");
+    const gpu_smoke_mod = createSdlModule(b, target, optimize, build_options, "src/gpu_smoke.zig");
     const gpu_smoke_exe = b.addExecutable(.{
         .name = "gpu-smoke",
         .root_module = gpu_smoke_mod,
     });
 
-    const unit_tests_mod = createSdlModule(b, target, optimize, lib_mod, build_options, "src/tests.zig");
+    const unit_tests_mod = createSdlModule(b, target, optimize, build_options, "src/tests.zig");
     const unit_tests = b.addTest(.{
         .root_module = unit_tests_mod,
     });
@@ -116,17 +110,15 @@ fn createGameModule(
     b: *std.Build,
     target: anytype,
     optimize: std.builtin.OptimizeMode,
-    lib_mod: *std.Build.Module,
     build_options: *std.Build.Step.Options,
 ) *std.Build.Module {
-    return createSdlModule(b, target, optimize, lib_mod, build_options, "src/main.zig");
+    return createSdlModule(b, target, optimize, build_options, "src/main.zig");
 }
 
 fn createSdlModule(
     b: *std.Build,
     target: anytype,
     optimize: std.builtin.OptimizeMode,
-    lib_mod: *std.Build.Module,
     build_options: *std.Build.Step.Options,
     root_source_file: []const u8,
 ) *std.Build.Module {
@@ -136,7 +128,6 @@ fn createSdlModule(
         .optimize = optimize,
         .link_libc = true,
     });
-    mod.addImport("sdl3_Template", lib_mod);
     mod.addOptions("build_options", build_options);
     mod.linkSystemLibrary("SDL3", .{});
     mod.linkSystemLibrary("SDL3_ttf", .{});

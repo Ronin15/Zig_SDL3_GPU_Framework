@@ -192,7 +192,99 @@ Acceptance checks:
       `.skipped_no_swapchain` correctly.
 - [ ] Adding a second batcher later would not require rewriting device setup.
 
-## Slice 7: Shader And Platform Expansion
+## Slice 7: Preallocated Thread System And Parallel Render Prep
+
+Goal: add a deterministic, pre-spawned worker system that lets each engine
+system use all active workers for CPU work, then finish before the next system
+or render phase starts.
+
+Current foundation:
+
+- `Engine` owns app coordination and state-stack update/render flow.
+- `TimeLoop` already enforces fixed-step gameplay updates.
+- Renderer command submission is currently serial and owns SDL_GPU command
+  buffers, swapchain acquisition, vertex upload, and submit.
+- Zig 0.16 provides `std.Thread.spawn`, atomics, and `std.Io` blocking
+  primitives; this checkout does not rely on a std thread-pool abstraction.
+
+Thread-system design:
+
+- [ ] Add `src/app/thread_system.zig` with `ThreadSystem`,
+      `ThreadSystemConfig`, `WorkerId`, `ParallelRange`, `BatchStats`, and a
+      deterministic `parallelFor` API.
+- [ ] Own `ThreadSystem` from `Engine`; initialize it after SDL/app config is
+      known and deinitialize it before allocator teardown.
+- [ ] Pre-spawn up to `max_worker_threads` at init with `std.Thread.spawn`.
+      Never create or destroy OS threads during gameplay frames.
+- [ ] Default worker count to one fewer than `std.Thread.getCpuCount()` when
+      possible, reserving the main/render thread; allow config override for
+      worker count, stack size, minimum parallel item count, grain size, queue
+      capacity, and short spin-before-park behavior.
+- [ ] Use preallocated worker records, batch descriptors, completion counters,
+      per-worker scratch, and fixed-capacity queues. No frame-batch submission
+      may allocate after initialization or explicit reserve calls.
+- [ ] Use atomics for hot counters and wake state; use `std.Io.Mutex`,
+      `std.Io.Condition`, or `std.Io.Semaphore` only for parking and shutdown
+      paths where blocking is expected.
+- [ ] Let the main thread participate in submitted batches while waiting so it
+      does useful work instead of only acting as a coordinator.
+- [ ] Dynamically scale active workers only at batch boundaries based on prior
+      batch cost, item count, main-thread wait time, and worker utilization.
+      Small batches run inline on the main thread.
+- [ ] Stop accepting work during shutdown, wake parked workers, join every
+      pre-spawned thread, and assert that no frame batch is still outstanding.
+
+Engine/system integration:
+
+- [ ] Add an update/render-prep context that exposes `thread_system` to states
+      or future systems without moving timing policy out of `main.zig`.
+- [ ] Keep systems ordered: each system may use the whole worker set, but all
+      of its jobs must complete before the next system starts.
+- [ ] Allow worker jobs to read immutable snapshots and write only disjoint
+      output ranges or per-worker scratch.
+- [ ] Keep `StateTransitions`, state-stack mutation, SDL events, SDL window
+      calls, and renderer ownership on the main thread.
+- [ ] Record batch stats in a lightweight struct that debug overlay or logs can
+      consume later without adding hot-path string formatting.
+
+Parallel render-prep design:
+
+- [ ] Keep SDL_GPU command-buffer acquisition, swapchain acquisition, GPU
+      upload, render-pass encoding, and submit on the main/render thread for
+      the first implementation.
+- [ ] Parallelize CPU render prep only: visibility/culling, layer bucketing,
+      stable sort by layer and submission sequence, sprite-to-vertex expansion,
+      draw-group construction, and per-worker temporary vertex/group buffers.
+- [ ] Snapshot texture/resource metadata needed by workers before dispatch so
+      worker jobs never observe renderer arrays while they are being mutated.
+- [ ] Merge worker outputs on the main thread in deterministic layer and
+      sequence order, then upload the final vertex buffer and submit one GPU
+      command buffer.
+- [ ] Preserve the current serial path and choose it for low command counts,
+      low layer counts, unsupported thread targets, or debug comparisons.
+- [ ] Defer threaded SDL_GPU command buffers until profiling proves main-thread
+      command encoding is the bottleneck. If added later, command buffers must
+      be acquired, used, and submitted on the same worker thread; swapchain
+      acquisition must remain on the window thread.
+
+Acceptance checks:
+
+- [ ] `parallelFor` covers every item exactly once and never writes outside the
+      requested range.
+- [ ] Batch execution performs no allocations after init/reserve; enforce this
+      with a failing allocator in tests.
+- [ ] System barriers are deterministic: later systems always see completed
+      output from earlier systems.
+- [ ] Shutdown wakes and joins parked workers without leaking or deadlocking.
+- [ ] Serial and parallel render prep produce identical vertex order, draw
+      group order, layer ordering, and invalid-texture skipping for the same
+      command input.
+- [ ] Existing visible rendering remains swapchain/vsync paced, and
+      hidden/minimized/no-swapchain fallback pacing remains unchanged.
+- [ ] `zig build test`, `zig build check`, and `zig build verify` pass before
+      the slice is considered complete.
+
+## Slice 8: Shader And Platform Expansion
 
 Goal: keep platform support reliable as shader count and target platforms grow.
 
@@ -226,8 +318,9 @@ Acceptance checks:
 4. Asset cache.
 5. Text and font service.
 6. Renderer composition.
-7. Shader and platform expansion.
+7. Preallocated thread system and parallel render prep.
+8. Shader and platform expansion.
 
 This order keeps gameplay/menu correctness ahead of larger renderer work, then
-builds resource ownership before text/UI and more render pipelines depend on it.
-
+builds resource ownership before text/UI, renderer composition, and parallel
+render preparation depend on it.

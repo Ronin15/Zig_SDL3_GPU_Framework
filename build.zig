@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
     const shader_cross_compiler = b.option([]const u8, "shader-cross-compiler", "SPIR-V to platform shader compiler") orelse "spirv-cross";
     const debug_overlay = b.option(bool, "debug-overlay", "Enable debug overlay rendering") orelse true;
     const gpu_shader_formats = shaderFormatsForTarget(target.result.os.tag);
+    const force_llvm_lld = forceLlvmLldForTarget(target);
 
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "app_name", app_name);
@@ -50,17 +51,23 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = app_name,
         .root_module = exe_mod,
+        .use_llvm = force_llvm_lld,
+        .use_lld = force_llvm_lld,
     });
 
     const gpu_smoke_mod = createSdlModule(b, target, optimize, build_options, "src/gpu_smoke.zig");
     const gpu_smoke_exe = b.addExecutable(.{
         .name = "gpu-smoke",
         .root_module = gpu_smoke_mod,
+        .use_llvm = force_llvm_lld,
+        .use_lld = force_llvm_lld,
     });
 
     const unit_tests_mod = createSdlModule(b, target, optimize, build_options, "src/tests.zig");
     const unit_tests = b.addTest(.{
         .root_module = unit_tests_mod,
+        .use_llvm = force_llvm_lld,
+        .use_lld = force_llvm_lld,
     });
 
     b.installArtifact(exe);
@@ -192,6 +199,14 @@ fn shaderFormatsForTarget(os_tag: std.Target.Os.Tag) u32 {
         .linux => shader_format_spirv,
         else => @panic("unsupported SDL_GPU shader target: add shader generation for this OS"),
     };
+}
+
+fn forceLlvmLldForTarget(target: std.Build.ResolvedTarget) ?bool {
+    if (target.query.isNative() and target.result.os.tag == .linux and target.result.abi.isGnu()) {
+        return true;
+    }
+
+    return null;
 }
 
 fn addShaderSteps(

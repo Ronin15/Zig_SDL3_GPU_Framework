@@ -7,18 +7,14 @@ It builds target-native shaders at build time and renders through SDL_GPU.
 
 ## Features
 
-- SDL3 window, event loop, and keyboard input
-- SDL_GPU sprite and rectangle rendering
-- Metal shaders on macOS and SPIR-V shaders on Linux
-- Fixed 60Hz simulation with interpolation for varying-refresh rendering
-- Vsync-paced visible rendering with 60Hz background throttling
-- Player-controlled pause and forced pause for hidden, minimized, or no-swapchain frames
-- State stack for gameplay, screens, and overlays
-- Held gameplay input plus one-frame commands
-- Pre-spawned thread system for parallel CPU batches that finish before the next engine step
-- Runtime asset loading from the installed `assets/` directory
-- F2 debug FPS overlay using SDL3_ttf
-- GPU smoke executable for SDL_GPU device and frame-submission checks
+- Clone-and-edit 2D game structure with app, game, render, asset, and platform layers
+- SDL_GPU-first rendering with sprites, primitive rectangles, batching, and shader build steps
+- Fixed-step 60Hz simulation with interpolated rendering for high-refresh displays
+- State-stack flow for gameplay screens, modal overlays, and pause behavior
+- Runtime asset loading from the installed asset directory with safe relative paths
+- Linux and macOS shader pipeline: SPIR-V on Linux, Metal shaders on macOS
+- Development workflow with `run`, `dev`, `test`, `check`, `verify`, `gpu-smoke`, and `package`
+- Optional F2 FPS overlay for local debugging
 
 ## Requirements
 

@@ -93,9 +93,10 @@ Sprite coordinate spaces:
 
 ## Runtime Assets
 
-The current demo draws primitives, so it has no required PNG asset. Put PNGs
-under `assets/`, then acquire them through the app-owned asset cache from a
-render context.
+The current demo draws primitives, so it has no required PNG asset. The default
+text path uses the bundled `assets/fonts/NotoSansMono-Regular.ttf` font. Put
+additional PNGs, fonts, and other runtime files under `assets/`, then acquire
+renderer-backed resources through the app-owned services from a render context.
 
 Runtime assets are installed under `zig-out/bin/<asset-root>`. The default
 asset root is `assets`; change it with `-Dasset-root=content`.
@@ -117,6 +118,19 @@ last lease is released, the cache destroys the renderer texture. Cache lookup an
 retain/release are setup-time operations; per-frame rendering should keep using
 the retained `TextureId` directly.
 
+## Text Rendering
+
+`TextService` owns SDL3_ttf initialization and shutdown, opens fonts through
+`AssetStore`, and caches rendered text as renderer textures. Production
+`RenderContext` values provide it for menu and UI states; unit-test contexts can
+leave it null when text is not part of the contract under test. Load fonts from
+`assets/fonts/...`, keep the returned `FontId`, acquire text only when the string
+or style changes, draw the returned texture through `Renderer.drawSprite`, and
+release the `TextTextureLease` from the owning state or service.
+
+The default font is `fonts/NotoSansMono-Regular.ttf`. System font probing is not
+part of the normal runtime path.
+
 ## Adding A Shader
 
 Add GLSL source under `assets/shaders/`, then add an entry to the
@@ -137,5 +151,5 @@ for macOS through `spirv-cross`.
 Press F2 to toggle the yellow FPS overlay. It reports render-loop cadence, not
 the fixed update tick rate. The overlay uses drawable coordinates so its
 SDL3_ttf texture remains independent of game scaling, and it scales font size by
-the drawable-to-window pixel ratio for high-DPI displays. The current overlay
-probes common system monospace font paths.
+the drawable-to-window pixel ratio for high-DPI displays. The overlay renders
+through the asset-backed text service and bundled default font.

@@ -43,6 +43,7 @@ pub const MyState = struct {
         _ = self;
         _ = context.renderer;
         _ = context.asset_cache;
+        _ = context.text_service;
         _ = context.interpolation_alpha;
         _ = context.thread_system;
     }

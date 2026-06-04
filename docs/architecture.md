@@ -7,13 +7,14 @@ behavior under `src/game/`.
 ## Source Layout
 
 - `src/main.zig` creates `AppConfig`, initializes `Engine`, and runs the fixed-step loop.
-- `src/app/engine.zig` coordinates SDL app flow, the window, asset cache, renderer, state stack, pause controller, input, debug overlay, and thread system.
+- `src/app/engine.zig` coordinates SDL app flow, the window, asset cache, text service, renderer, state stack, pause controller, input, debug overlay, and thread system.
 - `src/app/time_loop.zig` keeps simulation fixed at 60Hz.
 - `src/app/frame_pacer.zig` classifies window visibility and applies fallback frame pacing.
 - `src/app/state.zig` manages state allocation, destruction, policies, and queued transitions.
 - `src/app/thread_system.zig` provides pre-spawned workers for synchronous parallel CPU batches.
 - `src/app/resolution.zig` owns pure logical-resolution, viewport, and coordinate conversion policy.
 - `src/render/renderer.zig` manages the SDL_GPU device, window claim, swapchain setup, logical presentation, sprite pipeline, textures, and frame submission.
+- `src/render/text.zig` owns SDL3_ttf lifecycle, asset-backed fonts, and cached text textures.
 - `src/render/debug_overlay.zig` and `src/render/fps_counter.zig` draw the F2 FPS overlay.
 - `src/game/demo_state.zig` and `src/game/pause_state.zig` are the current game states.
 - `src/platform/` contains shared SDL C imports and GPU smoke-test code.
@@ -44,8 +45,8 @@ state stays in the SDL_GPU renderer path.
 ## Coordination Boundaries
 
 Game states draw through `Renderer`; they should not call SDL_GPU directly.
-Window, GPU device, swapchain, shader, texture, and frame submission code stays
-under `src/render/` and `src/app/`.
+Window, GPU device, swapchain, shader, texture, text, and frame submission code
+stays under `src/render/` and `src/app/`.
 
 Raw keyboard input maps to named actions in `src/app/input.zig`. Gameplay code
 reads held actions from `InputState`; app-level actions such as pause, resume,

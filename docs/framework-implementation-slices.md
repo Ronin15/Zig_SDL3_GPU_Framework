@@ -214,26 +214,29 @@ for menus, buttons, and UI.
 Current foundation:
 
 - SDL3_ttf is a core dependency.
-- `FpsCounter` proves rendered text can become a texture.
-- `text.zig` defines asset-backed font and text layout contracts.
+- `TextService` owns SDL3_ttf lifecycle, asset-backed font loading, and cached
+  renderer text textures.
+- `FpsCounter` consumes the text service instead of probing system fonts or
+  owning raw SDL_ttf resources.
+- `assets/fonts/NotoSansMono-Regular.ttf` is the bundled default text font.
 
 Checklist:
 
-- [ ] Add a centralized text/font service that owns `TTF_Init` and `TTF_Quit`.
-- [ ] Load fonts from `assets/fonts/...` through `AssetStore`.
-- [ ] Add `FontId` allocation and validation using generational IDs.
-- [ ] Render text into cached renderer textures.
-- [ ] Define cache invalidation for text string, font, color, wrap width, and
+- [x] Add a centralized text/font service that owns `TTF_Init` and `TTF_Quit`.
+- [x] Load fonts from `assets/fonts/...` through `AssetStore`.
+- [x] Add `FontId` allocation and validation using generational IDs.
+- [x] Render text into cached renderer textures.
+- [x] Define cache invalidation for text string, font, color, wrap width, and
       layout options.
-- [ ] Move `FpsCounter` to consume the text service.
-- [ ] Add at least one bundled font or document the asset requirement clearly.
-- [ ] Add tests for descriptor validation and cache keys where possible.
+- [x] Move `FpsCounter` to consume the text service.
+- [x] Add at least one bundled font or document the asset requirement clearly.
+- [x] Add tests for descriptor validation and cache keys where possible.
 
 Acceptance checks:
 
-- [ ] F2 overlay still renders yellow FPS text.
-- [ ] No system font path probing remains in normal text flow.
-- [ ] Text texture lifetime is centralized and cleaned up by the owning service.
+- [x] F2 overlay still renders yellow FPS text.
+- [x] No system font path probing remains in normal text flow.
+- [x] Text texture lifetime is centralized and cleaned up by the owning service.
 
 ## Slice 6: Renderer Composition
 

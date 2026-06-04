@@ -24,6 +24,7 @@ const state_mod = @import("state.zig");
 const RenderContext = state_mod.RenderContext;
 const StateStack = state_mod.StateStack;
 const StateTransitions = state_mod.StateTransitions;
+const TextService = @import("../render/text.zig").TextService;
 const UpdateContext = state_mod.UpdateContext;
 const ThreadSystem = @import("thread_system.zig").ThreadSystem;
 const TimeLoop = @import("time_loop.zig").TimeLoop;
@@ -38,6 +39,7 @@ pub const Engine = struct {
     assets: AssetStore,
     renderer: Renderer,
     asset_cache: AssetCache,
+    text_service: TextService,
     debug_overlay: DebugOverlay,
     states: StateStack,
     transitions: StateTransitions,
@@ -78,8 +80,11 @@ pub const Engine = struct {
         var asset_cache = AssetCache.init(allocator, assets);
         errdefer asset_cache.deinit(&renderer);
 
-        var debug_overlay = DebugOverlay.init();
-        errdefer debug_overlay.deinit(&renderer);
+        var text_service = try TextService.init(allocator, assets);
+        errdefer text_service.deinit(&renderer);
+
+        var debug_overlay = DebugOverlay.init(&text_service);
+        errdefer debug_overlay.deinit();
 
         var states = StateStack.init(allocator);
         errdefer states.deinit();
@@ -115,6 +120,7 @@ pub const Engine = struct {
             .assets = assets,
             .renderer = renderer,
             .asset_cache = asset_cache,
+            .text_service = text_service,
             .debug_overlay = debug_overlay,
             .states = states,
             .transitions = transitions,
@@ -130,7 +136,8 @@ pub const Engine = struct {
         self.thread_system.deinit();
         self.transitions.deinit();
         self.states.deinit();
-        self.debug_overlay.deinit(&self.renderer);
+        self.debug_overlay.deinit();
+        self.text_service.deinit(&self.renderer);
         self.asset_cache.deinit(&self.renderer);
         self.renderer.deinit();
         self.window.deinit();
@@ -221,13 +228,14 @@ pub const Engine = struct {
             try self.states.render(RenderContext{
                 .renderer = &self.renderer,
                 .asset_cache = &self.asset_cache,
+                .text_service = &self.text_service,
                 .interpolation_alpha = interpolation_alpha,
                 .thread_system = &self.thread_system,
             });
             try self.debug_overlay.render(&self.renderer);
             switch (try self.renderer.endFrame()) {
                 .submitted => {
-                    try self.debug_overlay.recordSubmittedFrame(&self.renderer, frame_delta_ns);
+                    try self.debug_overlay.recordSubmittedFrame(&self.text_service, &self.renderer, frame_delta_ns);
                     if (frame_policy.target_frame_ns) |target_frame_ns| {
                         frame_pacer.paceTargetFrame(frame_start_ns, target_frame_ns);
                     }

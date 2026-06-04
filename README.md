@@ -14,6 +14,7 @@ It builds target-native shaders at build time and renders through SDL_GPU.
 - State-stack flow for gameplay screens, modal overlays, and pause behavior
 - Policy-based input routing for gameplay, app commands, UI, and debug actions
 - Runtime asset loading from the installed asset directory with safe relative paths
+- Asset-backed SDL3_ttf text rendering with cached renderer textures
 - Linux and macOS shader pipeline: SPIR-V on Linux, Metal shaders on macOS
 - Development workflow with `run`, `dev`, `test`, `check`, `verify`, `gpu-smoke`, and `package`
 - Optional F2 FPS overlay for local debugging
@@ -84,12 +85,12 @@ build options, formatting, shader commands, and GPU smoke details.
 - `build.zig.zon` contains project metadata.
 - `src/main.zig` contains the executable entry point and high-level fixed-step timing loop.
 - `src/app/` contains SDL app coordination, input routing, timing, pause policy, frame pacing, thread system, and state stack flow.
-- `src/render/` contains SDL_GPU rendering, camera transforms, GPU resources, and debug overlay rendering.
+- `src/render/` contains SDL_GPU rendering, camera transforms, GPU resources, text, and debug overlay rendering.
 - `src/game/` contains game/application states such as the temporary demo and pause overlay.
 - `src/platform/` contains SDL/platform integration helpers and GPU smoke-test code.
 - `src/assets/` contains runtime asset path resolution, installed-file loading, and cache-backed texture ownership.
 - `src/core/` contains small shared helpers.
-- `assets/` contains runtime assets and shader sources.
+- `assets/` contains runtime assets, bundled fonts, and shader sources.
 
 Generated build output goes under `zig-out/` and should not be committed.
 

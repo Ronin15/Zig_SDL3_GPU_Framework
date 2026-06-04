@@ -9,6 +9,7 @@ const AssetCache = @import("../assets/cache.zig").AssetCache;
 const input_router = @import("input_router.zig");
 const InputRoutingPolicy = input_router.InputRoutingPolicy;
 const Renderer = @import("../render/renderer.zig").Renderer;
+const TextService = @import("../render/text.zig").TextService;
 const ThreadSystem = @import("thread_system.zig").ThreadSystem;
 const c = @import("../platform/sdl.zig").c;
 
@@ -57,6 +58,7 @@ pub const UpdateContext = struct {
 pub const RenderContext = struct {
     renderer: *Renderer,
     asset_cache: *AssetCache,
+    text_service: ?*TextService,
     interpolation_alpha: f32,
     thread_system: *ThreadSystem,
 };
@@ -461,6 +463,7 @@ fn testRenderContext(
     return .{
         .renderer = renderer,
         .asset_cache = asset_cache,
+        .text_service = null,
         .interpolation_alpha = interpolation_alpha,
         .thread_system = thread_system,
     };

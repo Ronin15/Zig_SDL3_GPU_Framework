@@ -123,6 +123,11 @@ pub const Renderer = struct {
 
         const target_format = c.SDL_GetGPUSwapchainTextureFormat(device, window);
         const shader_set = try selectShaderSet(device);
+        log.debug("selected SDL_GPU shader set: format={s} vertex=\"{s}\" fragment=\"{s}\"", .{
+            shaderFormatName(shader_set.format),
+            shader_set.vertex_path,
+            shader_set.fragment_path,
+        });
         const pipeline = try createSpritePipeline(allocator, device, assets, target_format, shader_set);
         errdefer c.SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
 
@@ -200,14 +205,18 @@ pub const Renderer = struct {
     }
 
     pub fn createTextureFromPng(self: *Renderer, assets: AssetStore, relative_path: []const u8) !TextureHandle {
-        const path = try assets.resolveReadablePath(relative_path);
+        const path = assets.resolveReadablePath(relative_path) catch |err| {
+            log.err("failed to resolve PNG texture asset \"{s}\": {}", .{ relative_path, err });
+            return err;
+        };
         defer self.allocator.free(path);
 
         const path_z = try self.allocator.dupeZ(u8, path);
         defer self.allocator.free(path_z);
 
         const loaded = c.SDL_LoadPNG(path_z.ptr) orelse {
-            return sdlError("SDL_LoadPNG");
+            log.err("SDL_LoadPNG failed for texture \"{s}\": {s}", .{ relative_path, c.SDL_GetError() });
+            return error.SdlError;
         };
         defer c.SDL_DestroySurface(loaded);
 
@@ -821,7 +830,10 @@ fn createShader(
     storage_buffers: u32,
     uniform_buffers: u32,
 ) !*c.SDL_GPUShader {
-    const code = try assets.readAlloc(path, max_shader_bytes);
+    const code = assets.readAlloc(path, max_shader_bytes) catch |err| {
+        log.err("failed to read shader asset \"{s}\": {}", .{ path, err });
+        return err;
+    };
     defer allocator.free(code);
 
     var shader_info = std.mem.zeroes(c.SDL_GPUShaderCreateInfo);
@@ -905,6 +917,12 @@ fn selectShaderSetFromFormats(
     }
 
     return error.UnsupportedShaderFormat;
+}
+
+fn shaderFormatName(format: c.SDL_GPUShaderFormat) []const u8 {
+    if (format == c.SDL_GPU_SHADERFORMAT_MSL) return "MSL";
+    if (format == c.SDL_GPU_SHADERFORMAT_SPIRV) return "SPIR-V";
+    return "unknown";
 }
 
 fn spriteCommandLessThan(_: void, lhs: SpriteCommand, rhs: SpriteCommand) bool {

@@ -70,7 +70,9 @@ zig build -Dgpu-debug=true
 
 Runtime diagnostics use Zig `std.log` filtering. The default `auto` level keeps
 Debug builds at `debug` and release builds at `warn`, which still includes
-errors. Override it when you need a different signal level:
+errors. Debug logs can include detailed startup and fallback context, but
+warning and error logs should stay rare and actionable. Override the level when
+you need a different signal:
 
 ```sh
 zig build -Dlog-level=warn

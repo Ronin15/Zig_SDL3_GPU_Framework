@@ -15,6 +15,7 @@ pub const SdlContext = struct {
         if (!c.SDL_Init(flags)) {
             return sdlError("SDL_Init");
         }
+        log.debug("SDL initialized with flags=0x{x}", .{flags});
         return .{};
     }
 
@@ -31,6 +32,7 @@ pub const Window = struct {
         const handle = c.SDL_CreateWindow(title.ptr, @intCast(width), @intCast(height), flags) orelse {
             return sdlError("SDL_CreateWindow");
         };
+        log.debug("SDL window created: title=\"{s}\" size={}x{} flags=0x{x}", .{ title, width, height, flags });
         return .{ .handle = handle };
     }
 

@@ -10,6 +10,7 @@ const DebugOverlay = if (build_options.debug_overlay) @import("../render/debug_o
 const DemoState = @import("../game/demo_state.zig").DemoState;
 const frame_pacer = @import("frame_pacer.zig");
 const input_mod = @import("input.zig");
+const log = @import("../core/logging.zig").app;
 const Action = input_mod.Action;
 const FrameCommands = input_mod.FrameCommands;
 const InputState = input_mod.InputState;
@@ -75,6 +76,19 @@ pub const Engine = struct {
         var thread_system = try ThreadSystem.init(allocator, process_init.io, app_config.threading);
         errdefer thread_system.deinit();
 
+        log.debug(
+            "engine initialized: app=\"{s}\" logical={}x{} asset_root=\"{s}\" gpu_debug={} debug_overlay={} background_workers={}",
+            .{
+                app_config.app_name,
+                app_config.logical_width,
+                app_config.logical_height,
+                app_config.asset_root,
+                app_config.gpu_debug,
+                build_options.debug_overlay,
+                thread_system.backgroundWorkerCount(),
+            },
+        );
+
         return .{
             .allocator = allocator,
             .app_config = app_config,
@@ -123,7 +137,10 @@ pub const Engine = struct {
         while (c.SDL_PollEvent(&event)) {
             self.commands.handleEvent(&event);
             switch (event.type) {
-                c.SDL_EVENT_QUIT => self.running = false,
+                c.SDL_EVENT_QUIT => {
+                    log.debug("quit requested by SDL event", .{});
+                    self.running = false;
+                },
                 else => {},
             }
             if (!self.pause.isPaused()) {
@@ -134,7 +151,10 @@ pub const Engine = struct {
         }
 
         self.debug_overlay.applyCommands(&self.commands);
-        if (self.commands.wasPressed(.quit)) self.running = false;
+        if (self.commands.wasPressed(.quit)) {
+            log.debug("quit requested by input command", .{});
+            self.running = false;
+        }
     }
 
     pub fn framePolicy(self: *const Engine) frame_pacer.FramePolicy {
@@ -146,12 +166,17 @@ pub const Engine = struct {
         frame_policy: frame_pacer.FramePolicy,
         time_loop: *TimeLoop,
     ) !void {
+        if (frame_policy.should_pause_gameplay and !self.pause.isPaused()) {
+            log.debug("pausing gameplay while window cannot render", .{});
+        }
         try self.pause.applyWindowPolicy(frame_policy, &self.states, &self.input, time_loop, self.nowNs());
         if (!frame_policy.should_pause_gameplay and self.pause.isPaused() and
             (self.commands.wasPressed(Action.resumeGame) or self.commands.wasPressed(Action.pause)))
         {
+            log.debug("resuming gameplay by input command", .{});
             self.pause.exit(&self.states, &self.input, time_loop, self.nowNs());
         } else if (!frame_policy.should_pause_gameplay and !self.pause.isPaused() and self.commands.wasPressed(Action.pause)) {
+            log.debug("pausing gameplay by input command", .{});
             try self.pause.enter(&self.states, &self.input, time_loop, self.nowNs());
         }
     }
@@ -190,6 +215,9 @@ pub const Engine = struct {
                     }
                 },
                 .skipped_no_swapchain => {
+                    if (!self.pause.isPaused()) {
+                        log.debug("swapchain unavailable; pausing gameplay and using fallback pacing", .{});
+                    }
                     try self.pause.enter(&self.states, &self.input, time_loop, self.nowNs());
                     frame_pacer.paceFallbackFrame(frame_start_ns);
                 },
@@ -203,6 +231,7 @@ pub const Engine = struct {
         const result = try self.states.applyTransitions(&self.transitions);
         self.pause.reconcileWithStateStack(&self.states);
         if (result.quit_requested) {
+            log.debug("quit requested by state transition", .{});
             self.running = false;
         }
     }

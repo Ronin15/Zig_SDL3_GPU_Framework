@@ -38,18 +38,18 @@ Current foundation:
 
 Checklist:
 
-- [ ] Audit app, assets, game, core, render, and platform code for actionable diagnostics.
-- [ ] Add scoped logs only where they report startup facts, recovered degraded behavior, or real failure context.
-- [ ] Keep normal frame/update/render hot paths free of per-frame string formatting.
-- [ ] Keep pure helpers and validation helpers log-free unless they are runtime wrappers.
-- [ ] Keep release builds quiet by default while preserving warnings and errors.
+- [x] Audit app, assets, game, core, render, and platform code for actionable diagnostics.
+- [x] Add scoped logs only where they report startup facts, recovered degraded behavior, or real failure context.
+- [x] Keep normal frame/update/render hot paths free of per-frame string formatting.
+- [x] Keep pure helpers and validation helpers log-free unless they are runtime wrappers.
+- [x] Keep release builds quiet by default while preserving warnings and errors.
 
 Acceptance checks:
 
 - [x] `zig build test` compiles the test root with the shared log policy.
 - [x] `zig build check` compiles the app and GPU smoke executable.
 - [x] `zig build check --release=safe` verifies the release log-level default.
-- [ ] Project-wide diagnostic audit confirms no meaningful subsystem still uses default-scope logging or noisy warning/error severity.
+- [x] Project-wide diagnostic audit confirms no meaningful subsystem still uses default-scope logging or noisy warning/error severity.
 
 ## Slice 1: Input Routing
 

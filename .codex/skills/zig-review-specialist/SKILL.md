@@ -24,6 +24,7 @@ Stay review-only unless the user explicitly asks for fixes. Recommend `zig-debug
 - Engine boundaries: app coordination, rendering, game state, platform integration, assets, and small shared primitives should stay in their owning layers.
 - SDL3/SDL_GPU usage: resource creation/release pairing, main-thread ownership, swapchain failure paths, shader format selection, texture upload validation, and no game-layer raw GPU calls.
 - Performance: avoid hidden hot-path allocation, hash maps/string lookup in per-frame paths, unnecessary dynamic dispatch, and avoid broad frame-rate caps that damage high-refresh rendering.
+- Diagnostics: new features and roadmap slices should include scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Debug logs can be detailed but should avoid routine hot-path formatting unless clearly justified; `warn` and `err` should stay rare and actionable.
 - Tests: behavior-focused tests should cover pure logic; GPU/display checks should stay separate from ordinary unit coverage.
 
 ## Output Format

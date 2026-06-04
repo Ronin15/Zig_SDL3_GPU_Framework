@@ -13,7 +13,7 @@ Keep changes scoped, performance-conscious, and SDL_GPU-first. Do not introduce 
 
 For engine conventions, commands, and pitfalls, read `references/framework-guide.md` when a task touches more than one ownership boundary, build/test behavior, rendering, state flow, assets, or shaders.
 
-When implementing a roadmap slice, treat it as a full feature. Do not mark a slice complete unless runtime behavior, docs, tests, and acceptance checks are all integrated. If a dependency does not exist yet, call the work foundation or preparation and leave the feature checklist incomplete.
+When implementing a roadmap slice, treat it as a full feature. Do not mark a slice complete unless runtime behavior, diagnostics, docs, tests, and acceptance checks are all integrated. If a dependency does not exist yet, call the work foundation or preparation and leave the feature checklist incomplete.
 
 ## Coordination
 
@@ -42,7 +42,8 @@ If a change appears to belong in multiple layers, keep SDL/window/GPU ownership 
 5. Let state-stack policies decide whether lower states receive update, input, or render passes.
 6. Preserve fixed-step simulation with varying-refresh rendering; do not add a blanket 60 FPS render cap.
 7. Pair SDL resource creation with cleanup close to the creation site.
-8. Add behavior-focused Zig tests when logic can be tested without opening a window.
+8. Add scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Keep hot-path debug logging minimal and deliberate, keep `warn`/`err` rare and actionable, and keep pure helpers log-free.
+9. Add behavior-focused Zig tests when logic can be tested without opening a window.
 
 ## Validation Defaults
 

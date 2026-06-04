@@ -47,3 +47,5 @@ For frame pacing issues, distinguish visible, occluded/unfocused, hidden, minimi
 For input bugs, separate raw SDL events, action mapping, held gameplay state, one-frame commands, router policy, and state-stack dispatch. Clear held movement when a modal policy begins blocking gameplay input.
 
 For GPU smoke failures, record whether SDL created a window, created the GPU device, claimed the window, acquired the swapchain texture, encoded a pass, and submitted. Each step points to a different class of issue.
+
+When a fix improves a runtime boundary, add or preserve scoped `std.log` diagnostics that would make the same class of failure easier to identify next time. Use `debug` for low-frequency lifecycle/config/fallback context, `warn` only for recovered degraded behavior, and `err` only for real failure context. Keep pure helpers and validation helpers log-free unless they are runtime wrappers with useful call-site context.

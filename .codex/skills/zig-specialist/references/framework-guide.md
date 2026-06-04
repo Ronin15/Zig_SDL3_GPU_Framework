@@ -19,7 +19,9 @@ Keep `src/main.zig` timing-centric. Let app/state code own state lifetimes and t
 
 ## Slice Completion
 
-Roadmap slices are full features. Runtime behavior, docs, tests, and acceptance checks must all be integrated before a slice is complete. If a needed dependency does not exist yet, label the result as foundation or preparation and leave the feature checklist incomplete.
+Roadmap slices are full features. Runtime behavior, diagnostics, docs, tests, and acceptance checks must all be integrated before a slice is complete. If a needed dependency does not exist yet, label the result as foundation or preparation and leave the feature checklist incomplete.
+
+Use scoped `std.log` diagnostics as part of feature work. Debug logs may include detailed low-frequency lifecycle, configuration, fallback, and failure context. Avoid routine per-frame, per-event, or per-draw formatting unless the diagnostic value is clear and the impact is minimal. Keep `warn` for recovered degraded behavior, `err` for real failure context, and pure helper/validation functions log-free unless they are runtime wrappers.
 
 ## Build And Validation Commands
 

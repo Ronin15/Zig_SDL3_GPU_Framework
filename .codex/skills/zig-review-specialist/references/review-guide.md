@@ -44,3 +44,7 @@ Prefer tests that directly verify behavior: input routing, state policy, viewpor
 Do not require a display for unit tests. Treat GPU smoke and runnable window checks as separate validation with environmental prerequisites.
 
 When tests are weak, say exactly what contract remains untested and give a narrow scenario that would expose the bug.
+
+## Diagnostics Checks
+
+New features and roadmap slices should add scoped `std.log` diagnostics where they help operate or debug the feature. Debug logs may cover low-frequency lifecycle, configuration, fallback, and failure context. Avoid routine per-frame, per-event, or per-draw formatting unless the diagnostic value is clear and the impact is minimal. Keep `warn` for recovered degraded behavior, `err` for real failure context, and pure helper/validation functions log-free unless they are runtime wrappers.

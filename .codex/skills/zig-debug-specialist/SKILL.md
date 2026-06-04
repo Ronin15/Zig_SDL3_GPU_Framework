@@ -24,8 +24,9 @@ Diagnose and fix the confirmed failure first. Recommend `zig-review-specialist` 
 3. Run the narrowest relevant command before wider validation.
 4. Inspect the owner file and adjacent tests or build steps.
 5. Form one concrete hypothesis and test it.
-6. Fix only the confirmed issue, then rerun the failing command.
-7. Escalate to broader validation only after the targeted failure is resolved.
+6. When fixing a runtime or integration failure, add or preserve scoped `std.log` diagnostics at the runtime boundary if they would make the same failure diagnosable next time. Keep debug logs useful but minimal in hot paths, and keep `warn`/`err` rare and actionable.
+7. Fix only the confirmed issue, then rerun the failing command.
+8. Escalate to broader validation only after the targeted failure is resolved.
 
 ## Command Selection
 

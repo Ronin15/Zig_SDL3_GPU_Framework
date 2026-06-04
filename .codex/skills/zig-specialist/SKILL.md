@@ -1,6 +1,6 @@
 ---
 name: zig-specialist
-description: Zig game engine implementation specialist for SDL3/SDL_GPU-style projects. Use when Codex is asked to change Zig code, build wiring, tests, shaders, SDL3/SDL_GPU integration, app flow, state stack behavior, input routing, rendering, assets, frame pacing, pause policy, or related game-engine implementation details.
+description: Zig game engine implementation specialist for SDL3/SDL_GPU-style projects. Use when Codex is asked to change Zig code, build wiring, tests, shaders, SDL3/SDL_GPU integration, app flow, state stack behavior, input routing, rendering, assets, frame pacing, pause policy, performance-sensitive paths, or related game-engine implementation details.
 ---
 
 # Zig Specialist
@@ -9,7 +9,7 @@ description: Zig game engine implementation specialist for SDL3/SDL_GPU-style pr
 
 Start by reading the relevant files and current behavior before proposing or editing. Treat the codebase as a normal 2D game project. Prefer existing patterns over new abstractions unless the change clearly removes real complexity or unlocks an intended extension point.
 
-Keep changes scoped, performance-conscious, and SDL_GPU-first. Do not introduce new dependencies unless the user explicitly asks or the existing standard library/SDL3 path cannot reasonably solve the task.
+Keep changes scoped, performance-critical, and SDL_GPU-first. Do not introduce new dependencies unless the user explicitly asks or the existing standard library/SDL3 path cannot reasonably solve the task.
 
 For engine conventions, commands, and pitfalls, read `references/framework-guide.md` when a task touches more than one ownership boundary, build/test behavior, rendering, state flow, assets, or shaders.
 
@@ -44,6 +44,19 @@ If a change appears to belong in multiple layers, keep SDL/window/GPU ownership 
 7. Pair SDL resource creation with cleanup close to the creation site.
 8. Add scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Keep hot-path debug logging minimal and deliberate, keep `warn`/`err` rare and actionable, and keep pure helpers log-free.
 9. Add behavior-focused Zig tests when logic can be tested without opening a window.
+
+## Performance Rules
+
+Treat performance as part of correctness. Before adding work to per-frame,
+per-event, per-draw, fixed-step update, input dispatch, renderer submission, or
+asset/text lookup paths, identify whether it can be moved to initialization,
+asset loading, state transitions, configuration, or an explicit cache.
+
+- Keep hot paths allocation-free unless the allocation is measured, bounded, and intentionally isolated.
+- Prefer enums, bitsets, arrays, slices, direct indices, ring buffers, and generational IDs for runtime dispatch and resource lookup.
+- Avoid string-key lookup, hash-map dispatch, broad dynamic dispatch, callback chains, repeated descriptor validation, and formatted logging in hot paths unless justified by measured behavior.
+- Preserve fixed-step simulation with varying-refresh rendering; do not add broad frame-rate caps that harm high-refresh displays.
+- Keep renderer-facing data prepared, batchable, and handle-based rather than reconstructing resources or lookup state each frame.
 
 ## Validation Defaults
 

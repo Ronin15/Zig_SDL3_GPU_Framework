@@ -42,6 +42,13 @@ Add new code under the matching owner directory. Keep executable-only code near
 - Use core SDL3 PNG loading for textures. Do not add `SDL3_image` unless that dependency is explicitly chosen.
 - SDL3 and SDL3_ttf are system dependencies; avoid vendoring or half-adopting external dependencies.
 - Pair SDL resource creation with cleanup close to the creation site.
+- Treat performance as a correctness constraint in hot paths: fixed-step update,
+  input dispatch, render submission, asset lookup, and text/debug overlay.
+- Prefer allocation-free hot paths with enums, bitsets, arrays, slices, direct
+  indices, prepared resources, and stable handles.
+- Avoid per-frame string lookup, hash-map dispatch, dynamic dispatch, resource
+  churn, formatted logging, and broad frame-rate caps unless measured and
+  justified.
 
 ## Slice Implementation Rules
 

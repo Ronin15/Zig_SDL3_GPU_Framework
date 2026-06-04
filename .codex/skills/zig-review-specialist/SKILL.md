@@ -9,7 +9,7 @@ description: Zig game engine code review specialist. Use when Codex is asked to 
 
 Review as a senior Zig game-engine engineer. Lead with concrete findings, ordered by severity, and include file/line references. Prioritize correctness, ownership boundaries, resource lifetime, performance risk, test gaps, and behavior regressions over style.
 
-Do not rewrite the change during review unless the user explicitly asks for fixes. Avoid broad architectural commentary unless it points to a likely bug, maintenance hazard, or violated engine boundary.
+Do not rewrite the change during review unless the user explicitly asks for fixes. Avoid broad architectural commentary unless it points to a likely bug, maintenance hazard, performance regression, or violated engine boundary.
 
 Read `references/review-guide.md` when reviewing rendering, app flow, input/state behavior, SDL resources, build wiring, or tests.
 
@@ -23,7 +23,7 @@ Stay review-only unless the user explicitly asks for fixes. Recommend `zig-debug
 - Game-loop behavior: fixed-step updates, render interpolation, pause policy, frame pacing, and visible vs non-renderable window state.
 - Engine boundaries: app coordination, rendering, game state, platform integration, assets, and small shared primitives should stay in their owning layers.
 - SDL3/SDL_GPU usage: resource creation/release pairing, main-thread ownership, swapchain failure paths, shader format selection, texture upload validation, and no game-layer raw GPU calls.
-- Performance: avoid hidden hot-path allocation, hash maps/string lookup in per-frame paths, unnecessary dynamic dispatch, and avoid broad frame-rate caps that damage high-refresh rendering.
+- Performance: treat avoidable frame-time spikes as correctness risks. Flag hidden hot-path allocation, string-key lookup, hash-map dispatch, broad dynamic dispatch, callback chains, repeated descriptor validation, per-frame resource churn, unbatched GPU submissions, and broad frame-rate caps that damage high-refresh rendering. Prefer enums, bitsets, arrays, slices, direct indices, ring buffers, prepared resources, and generational IDs.
 - Diagnostics: new features and roadmap slices should include scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Debug logs can be detailed but should avoid routine hot-path formatting unless clearly justified; `warn` and `err` should stay rare and actionable.
 - Tests: behavior-focused tests should cover pure logic; GPU/display checks should stay separate from ordinary unit coverage.
 

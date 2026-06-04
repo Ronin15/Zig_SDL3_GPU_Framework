@@ -106,8 +106,9 @@ Current foundation:
   presentation state, and pure coordinate conversion helpers.
 - Renderer computes presentation from SDL_GPU swapchain drawable size and SDL
   window size on each submitted frame.
-- World and logical drawing use the logical viewport; drawable overlays use raw
-  swapchain pixels.
+- World and logical drawing is transformed through the logical presentation into
+  drawable pixels, then clipped to the logical viewport; drawable overlays use
+  raw swapchain pixels.
 - Integer-fit windows request a logical-size minimum client area so user
   resizing should not normally crop below 1x scale.
 

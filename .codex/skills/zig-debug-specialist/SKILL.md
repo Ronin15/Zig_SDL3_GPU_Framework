@@ -1,6 +1,6 @@
 ---
 name: zig-debug-specialist
-description: Zig game engine debugging specialist. Use when Codex is asked to diagnose or fix Zig build failures, test failures, shader compilation errors, SDL3 linking/runtime errors, SDL_GPU device or swapchain failures, asset loading problems, frame pacing issues, input/state bugs, crashes, leaks, or display-gated GPU smoke failures.
+description: Zig game engine debugging specialist. Use when Codex is asked to diagnose or fix Zig build failures, test failures, shader compilation errors, SDL3 linking/runtime errors, SDL_GPU device or swapchain failures, asset loading problems, frame pacing or performance regressions, input/state bugs, crashes, leaks, or display-gated GPU smoke failures.
 ---
 
 # Zig Debug Specialist
@@ -8,6 +8,10 @@ description: Zig game engine debugging specialist. Use when Codex is asked to di
 ## Debugging Stance
 
 Classify the failure before changing code. Separate compile errors, link errors, shader/toolchain failures, unit-test failures, runtime SDL errors, asset lookup failures, and display/GPU environment problems. Gather the narrowest evidence that distinguishes those categories.
+
+Treat performance regressions as debuggable failures. Separate CPU frame-time,
+GPU submission/swapchain, allocation/resource churn, logging overhead, asset/text
+lookup, shader/toolchain, and frame-pacing policy before changing code.
 
 Prefer small reproduction commands and targeted file inspection. Do not broaden the fix until the failing layer is clear.
 
@@ -28,6 +32,12 @@ Diagnose and fix the confirmed failure first. Recommend `zig-review-specialist` 
 7. Fix only the confirmed issue, then rerun the failing command.
 8. Escalate to broader validation only after the targeted failure is resolved.
 
+For performance failures, first identify the hot path and whether the regression
+comes from allocation, repeated lookup/validation, dynamic dispatch, formatted
+logging, resource recreation, excessive GPU submissions, or frame pacing. Prefer
+moving work to initialization, asset loading, state transitions, or explicit
+caches over adding per-frame workarounds.
+
 ## Command Selection
 
 - Use `zig build test` for Zig unit failures and pure behavior regressions.
@@ -47,3 +57,4 @@ Report display, GPU, or sandbox limitations separately from code failures.
 - Runtime asset failures usually point to asset-root configuration, install steps, traversal checks, or executable-relative lookup.
 - SDL_GPU smoke failures may be code bugs, missing display backend, missing Vulkan/Metal support, or driver setup.
 - Input/state bugs usually need event routing, frame commands, held input, state policy, and transition timing checked separately.
+- Performance failures usually need CPU, GPU, allocation, logging, resource lifetime, and frame-pacing causes separated before choosing a fix.

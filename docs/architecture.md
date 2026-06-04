@@ -36,10 +36,10 @@ enter pause, and use `SDL_DelayNS` fallback pacing. Occluded or unfocused visibl
 windows keep rendering but apply a 60Hz cap to avoid background render runaway.
 
 Each submitted frame computes presentation from the acquired SDL_GPU swapchain
-texture size and current SDL window size. World and logical UI draws use the
-configured logical size and SDL_GPU viewport/scissor state; drawable overlays use
-raw swapchain pixels. The project does not use `SDL_Renderer` logical
-presentation.
+texture size and current SDL window size. World and logical UI draws are
+transformed through that presentation into drawable pixels, then clipped to the
+logical viewport; drawable overlays use raw swapchain pixels. All presentation
+state stays in the SDL_GPU renderer path.
 
 ## Coordination Boundaries
 

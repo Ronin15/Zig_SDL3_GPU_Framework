@@ -20,7 +20,7 @@ pub const AppConfig = struct {
     high_pixel_density: bool = true,
     resizable: bool = true,
     gpu_debug: bool = false,
-    frames_in_flight: u32 = 2,
+    frames_in_flight: u32 = 3,
     present_mode: PresentMode = .vsync,
     clear_color: Color = .{ .r = 0.071, .g = 0.125, .b = 0.173, .a = 1.0 },
     threading: ThreadSystemConfig = .{},

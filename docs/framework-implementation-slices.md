@@ -547,6 +547,10 @@ Performance notes:
 
 - Hot processors should iterate SoA columns directly, not per-entity AoS structs
   or dynamically joined component records.
+- `ThreadSystem` integration is required for this slice. Keep a serial path for
+  small counts, tests, and fallback behavior, but the processor API and tests
+  must prove that systems can split `DataSystem` slices through
+  `ThreadSystem.parallelFor`.
 - Treat cache-line behavior as part of the processor contract. SoA columns used
   by SIMD processors should have an explicit alignment policy before relying on
   wider loads or target-specific vector behavior.
@@ -560,12 +564,25 @@ Performance notes:
 - Worker ranges should be chosen so two workers do not write the same cache line
   of a hot SoA column during normal fixed-step processing.
 
+First system shape:
+
+- `MovementSystem` should be the first ECS processor. It reads and writes the
+  movement-body SoA slices in `DataSystem`, keeps a simple serial path for small
+  counts and tests, and uses threaded SIMD ranges for larger batches.
+- `MovementSystem` must not create, destroy, add, or remove entities/components
+  inside worker ranges. Any structural change needed by future systems should be
+  deferred to a later command-buffer design.
+- The first implementation should prove the system contract before broadening
+  into AI, collision, pathfinding, or render-prep processors.
+
 Checklist:
 
 - [ ] Define systems as data processors that accept `DataSystem`, `ThreadSystem`,
       and fixed-step delta time rather than owning persistent data.
 - [ ] Add movement and particle processors that split dense SoA slices through
       `parallelFor`.
+- [ ] Wire `MovementSystem` through `ThreadSystem.parallelFor` with a serial path
+      for small counts and deterministic tests.
 - [ ] Use SIMD inside each worker range and scalar-tail code for remainder
       elements.
 - [ ] Add an explicit alignment strategy for hot SoA columns before introducing
@@ -585,6 +602,8 @@ Acceptance checks:
 - [ ] Scalar and SIMD movement results match for representative data sets.
 - [ ] Serial and threaded processor results match for the same initial
       `DataSystem`.
+- [ ] The movement processor has test coverage for the serial path and the
+      `ThreadSystem.parallelFor` path.
 - [ ] Worker jobs do not write outside their assigned `ParallelRange`.
 - [ ] Hot SoA columns used by SIMD processors have documented alignment behavior.
 - [ ] Thread-shared processor records that are concurrently written are either

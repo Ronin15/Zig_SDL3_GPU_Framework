@@ -1,45 +1,28 @@
 # Zig SDL3 GPU 2D Game
 
-A performance-focused Zig 0.16.0 + SDL3/SDL_GPU 2D game project.
+A performance-focused Zig 0.16.0 + SDL3/SDL_GPU 2D game project with an
+SDL_GPU renderer, deterministic game loop, state stack, runtime asset services,
+and multi-threaded data-oriented gameplay systems.
 
-The project keeps SDL_GPU at the center of rendering, uses SDL3 for windowing,
-input, text, and core PNG loading, and builds target-native shaders as part of
-the Zig build. It is structured as a lean framework for deterministic state
-flow, fixed-step gameplay, high-refresh rendering, safe runtime assets, and
-data-oriented update systems.
+## Highlights
 
-## What It Provides
+- **SDL_GPU-first rendering:** game code draws through a small renderer API while
+  GPU device setup, shader loading, batching, texture ownership, and frame
+  submission stay in the render layer. The build emits platform shader outputs:
+  SPIR-V on Linux and Metal shaders on macOS.
+- **Stable frame and state flow:** gameplay updates run at a fixed 60Hz while
+  rendering interpolates for high-refresh displays. A policy-driven state stack
+  handles gameplay screens, overlays, pause behavior, input routing, and ordered
+  transitions.
+- **Multi-threaded data processing:** gameplay state owns dense data columns for
+  processor-friendly iteration. The shared thread system scales to the host CPU,
+  adapts worker use per batch, and is already used by SIMD-aware movement and
+  particle updates with serial paths for small workloads.
+- **Practical runtime services:** installed assets use traversal-safe relative
+  paths, PNG textures are cached through SDL3 core loading, text rendering uses
+  asset-backed SDL3_ttf textures, and F2 toggles a local FPS overlay.
 
-### SDL_GPU Rendering Foundation
-
-- A renderer built around SDL_GPU
-- Sprite drawing through a small game-facing renderer API
-- Batched draw submission with stable layer ordering and renderer-owned GPU resources
-- Resizable high-DPI presentation that keeps gameplay in 1280x720 logical coordinates
-- Build-time shader outputs for supported targets: SPIR-V on Linux and Metal shaders on macOS
-
-### Predictable Game Flow
-
-- Fixed-step 60Hz gameplay updates with interpolated rendering for high-refresh displays
-- State-stack driven screens, overlays, pause behavior, and ordered transitions
-- Named input actions that separate held gameplay movement from one-frame app/debug commands
-- Visibility-aware frame pacing so hidden or minimized windows do not keep advancing gameplay
-
-### Data-Oriented Gameplay Systems
-
-- State-owned gameplay data in dense columns that processors can iterate directly
-- A SIMD-aware movement system that proves the data path with serial and threaded execution
-- A fixed-capacity particle system that reuses storage and avoids steady-state allocation
-- Pre-spawned worker support for deterministic frame-bounded CPU work
-
-### Assets, Text, And Debugging
-
-- Runtime asset loading from the installed asset directory with traversal-safe relative paths
-- Cached PNG texture ownership backed by SDL3 core PNG loading
-- Asset-backed SDL3_ttf text rendering with cached renderer textures
-- Optional F2 FPS overlay for local debugging
-
-Technical details live in the docs:
+For technical details, see
 [architecture](docs/architecture.md),
 [state stack and input](docs/state-stack-and-input.md), and
 [rendering, assets, and shaders](docs/rendering-assets-shaders.md).
@@ -58,7 +41,7 @@ See [setup](docs/setup.md) for platform package notes.
 
 ```sh
 git clone git@github.com:Ronin15/Zig_SDL3_GPU_Framework.git
-cd Zig_SDL3_GPU_FrameWork
+cd Zig_SDL3_GPU_Framework
 zig build
 zig build run
 ```

@@ -17,7 +17,12 @@ When implementing a roadmap slice, treat it as a full feature. Do not mark a sli
 
 ## Coordination
 
-Use `zig-review-specialist` for code-review passes over completed diffs. Use `zig-debug-specialist` when a build, test, shader, SDL, GPU, asset, input, or runtime failure must be diagnosed before implementation.
+Use `zig-design-specialist` before implementation when a task changes
+architecture, roadmap slices, `DataSystem`, processor contracts, deferred
+structural changes, or emergent gameplay flow. Use `zig-review-specialist` for
+code-review passes over completed diffs. Use `zig-debug-specialist` when a
+build, test, shader, SDL, GPU, asset, input, or runtime failure must be
+diagnosed before implementation.
 
 ## Ownership Boundaries
 

@@ -53,6 +53,11 @@ game-specific behavior under `src/game/`.
 4. Run fixed 60Hz updates while the time accumulator needs them.
 5. Render with interpolation between fixed updates.
 
+The runtime call path is `main.zig` -> `Engine` phase method -> `StateStack`
+policy dispatch -> eligible state or states. `main.zig` does not call gameplay
+state methods directly; `Engine` builds the update/render contexts and
+`StateStack` decides which states receive events, updates, and render calls.
+
 Visible rendering is paced by SDL_GPU swapchain acquisition with the configured
 present mode. Hidden, minimized, or no-swapchain frames skip GPU rendering,
 enter pause, and use `SDL_DelayNS` fallback pacing. Occluded or unfocused visible

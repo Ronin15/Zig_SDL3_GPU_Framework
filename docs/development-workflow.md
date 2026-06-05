@@ -110,9 +110,12 @@ explains what to tune: per-system parallel thresholds, worker fanout, adaptive
 scheduling, and batch grain size. The adaptive+tuned case keeps adaptive worker
 scheduling enabled, layers an external grain tuner on top, settles on the best
 measured grain before timing when possible, and reports phase, initial, final,
-best, and candidate grain sizes. Use `--details` only when you need the
-supporting per-case timings. Use other optional arguments only to narrow or
-scale the run:
+best, and candidate grain sizes. In adaptive cases, low-count processors may
+stay inline until measured completion time shows that worker-thread fanout is
+worth the synchronization cost; forced-inline batches are timing samples for
+that batch only and do not reset the shared scheduler for later processors. Use
+`--details` only when you need the supporting per-case timings. Use other
+optional arguments only to narrow or scale the run:
 
 ```sh
 zig build bench -- --profile quick

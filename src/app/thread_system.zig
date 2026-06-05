@@ -433,8 +433,10 @@ pub const ThreadSystem = struct {
 
         if (max_worker_threads == 0 or item_count < min_parallel_items or range_count <= 1) {
             stats.active_worker_threads = 0;
+            const batch_start_ns = nowNs(self.shared.io);
             runInline(item_count, grain_size, context, job_fn, &stats);
-            self.scheduler.record(stats);
+            const batch_end_ns = nowNs(self.shared.io);
+            stats.batch_duration_ns = elapsedNs(batch_start_ns, batch_end_ns);
             return stats;
         }
 
@@ -445,7 +447,10 @@ pub const ThreadSystem = struct {
         );
         if (active_worker_threads == 0) {
             stats.active_worker_threads = 0;
+            const batch_start_ns = nowNs(self.shared.io);
             runInline(item_count, grain_size, context, job_fn, &stats);
+            const batch_end_ns = nowNs(self.shared.io);
+            stats.batch_duration_ns = elapsedNs(batch_start_ns, batch_end_ns);
             self.scheduler.record(stats);
             return stats;
         }
@@ -739,7 +744,10 @@ const SchedulerState = struct {
             (range_count + ranges_per_participant - 1) / ranges_per_participant,
         );
         const range_target = @min(range_limited_workers, desired_participants - 1);
-        if (self.last_active_worker_threads == 0) return range_target;
+        if (self.last_active_worker_threads == 0) {
+            if (self.last_batch_duration_ns < busy_batch_ns) return 0;
+            return @min(range_target, @as(usize, 1));
+        }
 
         var target = if (self.preferred_worker_threads == 0) range_target else @min(self.preferred_worker_threads, range_limited_workers);
         target = @max(@as(usize, 1), target);
@@ -806,6 +814,42 @@ test "inline parallel for covers every item exactly once" {
     }
 }
 
+test "forced inline batch does not train adaptive scheduler" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+
+    var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 8;
+    var context = CoverageContext{ .hits = hits[0..] };
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 128,
+        .grain_size = 2,
+    });
+    defer threads.deinit();
+
+    threads.scheduler.record(.{
+        .item_count = 1024,
+        .range_count = 32,
+        .grain_size = 32,
+        .available_worker_threads = 2,
+        .active_worker_threads = 2,
+        .worker_thread_ranges = 16,
+        .batch_duration_ns = SchedulerState.busy_batch_ns,
+        .main_thread_wait_ns = 1,
+        .worker_utilization = 0.5,
+        .ran_inline = false,
+    });
+
+    const previous_duration_ns = threads.scheduler.last_batch_duration_ns;
+    const stats = threads.parallelFor(hits.len, &context, markCoverage);
+
+    try std.testing.expect(stats.ran_inline);
+    try std.testing.expectEqual(@as(usize, 2), threads.scheduler.last_active_worker_threads);
+    try std.testing.expectEqual(previous_duration_ns, threads.scheduler.last_batch_duration_ns);
+    for (&hits) |*hit| {
+        try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
+    }
+}
+
 test "worker thread parallel for covers every item exactly once" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
@@ -818,7 +862,9 @@ test "worker thread parallel for covers every item exactly once" {
     });
     defer threads.deinit();
 
-    const stats = threads.parallelFor(hits.len, &context, markCoverage);
+    const stats = threads.parallelForWithOptions(hits.len, &context, markCoverage, .{
+        .adaptive = false,
+    });
 
     try std.testing.expect(!stats.ran_inline);
     try std.testing.expect(stats.main_thread_ranges > 0);
@@ -884,9 +930,6 @@ test "parallel for options cap active workers and align ranges" {
 test "scheduler increases active workers after busy utilized batch" {
     var scheduler = SchedulerState{};
 
-    const first = scheduler.chooseActiveWorkerThreads(4, 32, true);
-    try std.testing.expectEqual(@as(usize, 4), first);
-
     scheduler.preferred_worker_threads = 1;
     scheduler.record(.{
         .item_count = 1024,
@@ -902,6 +945,34 @@ test "scheduler increases active workers after busy utilized batch" {
     });
 
     try std.testing.expectEqual(@as(usize, 2), scheduler.chooseActiveWorkerThreads(4, 32, true));
+}
+
+test "adaptive scheduler waits for meaningful inline completion time" {
+    var scheduler = SchedulerState{};
+
+    try std.testing.expectEqual(@as(usize, 0), scheduler.chooseActiveWorkerThreads(4, 32, true));
+
+    scheduler.record(.{
+        .item_count = 1024,
+        .range_count = 32,
+        .grain_size = 32,
+        .available_worker_threads = 4,
+        .active_worker_threads = 0,
+        .batch_duration_ns = SchedulerState.idle_batch_ns,
+        .ran_inline = true,
+    });
+    try std.testing.expectEqual(@as(usize, 0), scheduler.chooseActiveWorkerThreads(4, 32, true));
+
+    scheduler.record(.{
+        .item_count = 1024,
+        .range_count = 32,
+        .grain_size = 32,
+        .available_worker_threads = 4,
+        .active_worker_threads = 0,
+        .batch_duration_ns = SchedulerState.busy_batch_ns,
+        .ran_inline = true,
+    });
+    try std.testing.expectEqual(@as(usize, 1), scheduler.chooseActiveWorkerThreads(4, 32, true));
 }
 
 test "scheduler reduces active workers after cheap underutilized batch" {

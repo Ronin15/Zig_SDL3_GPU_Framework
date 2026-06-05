@@ -122,10 +122,15 @@ while it waits. Small batches run inline on the main thread, and batch
 submission does not allocate after initialization.
 
 Adaptive scheduling only changes how many already pre-spawned worker threads
-participate in a batch. Worker threads are reused across frame batches, parked when
-idle, and joined during `ThreadSystem` shutdown. Processor-specific batches can
-override grain size, cap selected worker threads, and align range starts to
-hot-column boundaries through `parallelForWithOptions`.
+participate in a batch. It uses measured batch completion time and worker
+utilization from adaptive batches to decide when work is large enough to leave
+the main thread. Batches forced inline by `min_parallel_items`, unavailable
+workers, or a single range still report their own timing, but they do not train
+the shared scheduler or suppress worker use for a later processor. Worker
+threads are reused across frame batches, parked when idle, and joined during
+`ThreadSystem` shutdown. Processor-specific batches can override grain size,
+cap selected worker threads, and align range starts to hot-column boundaries
+through `parallelForWithOptions`.
 
 ## Gameplay Data
 
@@ -150,9 +155,9 @@ transient events, or scratch buffers.
 
 `MovementSystem` updates movement bodies as an ordered gameplay data processor,
 using SIMD lanes inside each assigned range and
-`ThreadSystem.parallelForWithOptions` when the batch is large enough. Worker
-ranges are aligned to movement cache-line boundaries and only write their
-assigned movement rows.
+`ThreadSystem.parallelForWithOptions` when completion-time feedback shows the
+batch is large enough. Worker ranges are aligned to movement cache-line
+boundaries and only write their assigned movement rows.
 
 The demo player is intentionally a special-case facade for player input and
 facing rules, backed by `DataSystem` data. Enemies and other world objects

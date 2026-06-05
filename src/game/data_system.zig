@@ -12,6 +12,14 @@ const config = @import("../config.zig");
 const math = @import("../core/math.zig");
 const simd = @import("../core/simd.zig");
 
+pub const hot_soa_column_alignment: usize = 64;
+pub const movement_range_alignment_items: usize = hot_soa_column_alignment / @sizeOf(f32);
+
+pub const HotF32Slice = []align(hot_soa_column_alignment) f32;
+pub const ConstHotF32Slice = []align(hot_soa_column_alignment) const f32;
+
+const HotF32List = std.ArrayListAligned(f32, .fromByteUnits(hot_soa_column_alignment));
+
 pub const EntityId = struct {
     index: u32,
     generation: u32,
@@ -80,24 +88,24 @@ pub const MovementBodyPtr = struct {
 
 pub const MovementBodySlice = struct {
     entities: []const EntityId,
-    position_x: []f32,
-    position_y: []f32,
-    previous_x: []f32,
-    previous_y: []f32,
-    velocity_x: []f32,
-    velocity_y: []f32,
-    speed: []f32,
+    position_x: HotF32Slice,
+    position_y: HotF32Slice,
+    previous_x: HotF32Slice,
+    previous_y: HotF32Slice,
+    velocity_x: HotF32Slice,
+    velocity_y: HotF32Slice,
+    speed: HotF32Slice,
 };
 
 pub const ConstMovementBodySlice = struct {
     entities: []const EntityId,
-    position_x: []const f32,
-    position_y: []const f32,
-    previous_x: []const f32,
-    previous_y: []const f32,
-    velocity_x: []const f32,
-    velocity_y: []const f32,
-    speed: []const f32,
+    position_x: ConstHotF32Slice,
+    position_y: ConstHotF32Slice,
+    previous_x: ConstHotF32Slice,
+    previous_y: ConstHotF32Slice,
+    velocity_x: ConstHotF32Slice,
+    velocity_y: ConstHotF32Slice,
+    speed: ConstHotF32Slice,
 };
 
 pub const FacingData = struct {
@@ -429,13 +437,13 @@ const EntitySlot = struct {
 
 const MovementBodyStore = struct {
     entities: std.ArrayList(EntityId) = .empty,
-    position_x: std.ArrayList(f32) = .empty,
-    position_y: std.ArrayList(f32) = .empty,
-    previous_x: std.ArrayList(f32) = .empty,
-    previous_y: std.ArrayList(f32) = .empty,
-    velocity_x: std.ArrayList(f32) = .empty,
-    velocity_y: std.ArrayList(f32) = .empty,
-    speed: std.ArrayList(f32) = .empty,
+    position_x: HotF32List = .empty,
+    position_y: HotF32List = .empty,
+    previous_x: HotF32List = .empty,
+    previous_y: HotF32List = .empty,
+    velocity_x: HotF32List = .empty,
+    velocity_y: HotF32List = .empty,
+    speed: HotF32List = .empty,
 
     fn append(self: *MovementBodyStore, allocator: std.mem.Allocator, entity: EntityId, body: MovementBody) !u32 {
         if (self.entities.items.len >= std.math.maxInt(u32)) return error.TooManyMovementBodyRows;
@@ -880,6 +888,20 @@ fn expectMovementBodyColumnsAligned(slice: ConstMovementBodySlice) !void {
     try std.testing.expectEqual(slice.entities.len, slice.speed.len);
 }
 
+fn expectHotColumnPointersAligned(slice: ConstMovementBodySlice) !void {
+    try expectPointerAligned(slice.position_x.ptr);
+    try expectPointerAligned(slice.position_y.ptr);
+    try expectPointerAligned(slice.previous_x.ptr);
+    try expectPointerAligned(slice.previous_y.ptr);
+    try expectPointerAligned(slice.velocity_x.ptr);
+    try expectPointerAligned(slice.velocity_y.ptr);
+    try expectPointerAligned(slice.speed.ptr);
+}
+
+fn expectPointerAligned(ptr: [*]align(hot_soa_column_alignment) const f32) !void {
+    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(ptr) % hot_soa_column_alignment);
+}
+
 fn expectPrimitiveVisualColumnsAligned(slice: ConstPrimitiveVisualSlice) !void {
     try std.testing.expectEqual(slice.entities.len, slice.size_x.len);
     try std.testing.expectEqual(slice.entities.len, slice.size_y.len);
@@ -1000,6 +1022,22 @@ test "movement body columns can be loaded directly through simd helpers" {
     try std.testing.expectEqual([_]f32{ 11, 12, 13, 14 }, simd.toFloatArray(simd.loadFloat4(slice.position_y[0..])));
     try std.testing.expectEqual([_]f32{ 41, 42, 43, 44 }, simd.toFloatArray(simd.loadFloat4(slice.velocity_x[0..])));
     try std.testing.expectEqual([_]f32{ 61, 62, 63, 64 }, simd.toFloatArray(simd.loadFloat4(slice.speed[0..])));
+}
+
+test "movement hot columns keep explicit cache line alignment after growth" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    for (0..movement_range_alignment_items * 3 + 1) |index| {
+        const entity = try data.createEntity();
+        try data.setMovementBody(entity, testBody(@floatFromInt(index + 1)));
+    }
+
+    const slice = data.movementBodySliceConst();
+    try expectMovementBodyColumnsAligned(slice);
+    try expectHotColumnPointersAligned(slice);
+    try std.testing.expectEqual(@as(usize, 16), movement_range_alignment_items);
+    try std.testing.expectEqual(@as(usize, 0), (movement_range_alignment_items * @sizeOf(f32)) % hot_soa_column_alignment);
 }
 
 test "simd range helpers cover movement body vector and scalar tail counts" {

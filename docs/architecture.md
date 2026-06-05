@@ -78,6 +78,12 @@ on CPU count, with the main/render thread participating as an additional worker
 while it waits. Small batches run inline on the main thread, and batch
 submission does not allocate after initialization.
 
+Adaptive scheduling only changes how many already pre-spawned background workers
+participate in a batch. Workers are reused across frame batches, parked when
+idle, and joined during `ThreadSystem` shutdown. Processor-specific batches can
+override grain size, cap selected background workers, and align range starts to
+hot-column boundaries through `parallelForWithOptions`.
+
 ## Gameplay Data
 
 Gameplay states own their own `DataSystem`; it is not an app singleton. The
@@ -86,9 +92,11 @@ membership queries, and typed SoA data such as movement bodies, facing,
 primitive visual intent, and relative asset references.
 
 Hot gameplay data is stored as scalar columns. The movement-body store exposes
-aligned `position_x`, `position_y`, `previous_x`, `previous_y`, `velocity_x`,
-`velocity_y`, and `speed` slices so update processors can load lanes directly
-with `src/core/simd.zig`. Component masks decide whether an entity belongs to a
+64-byte-aligned `position_x`, `position_y`, `previous_x`, `previous_y`,
+`velocity_x`, `velocity_y`, and `speed` slices so update processors can load
+lanes directly with `src/core/simd.zig`. Movement processor ranges should align
+to `data_system.movement_range_alignment_items`, which maps one cache line to
+sixteen `f32` elements. Component masks decide whether an entity belongs to a
 system; hot processors iterate already aligned SoA slices.
 
 Update systems mutate `DataSystem` slices during fixed-step updates. Render

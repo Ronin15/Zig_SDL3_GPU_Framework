@@ -337,7 +337,7 @@ Thread-system design:
       and shutdown paths where blocking is expected.
 - [x] Let the main thread participate in submitted batches while waiting so it
       does useful work instead of only acting as a coordinator.
-- [ ] Dynamically scale active workers only at batch boundaries based on prior
+- [x] Dynamically scale active workers only at batch boundaries based on prior
       batch cost, item count, main-thread wait time, and worker utilization.
       Small batches run inline on the main thread.
 - [x] Stop accepting work during shutdown, wake parked workers, join every
@@ -351,8 +351,8 @@ Engine/system integration:
       of its jobs must complete before the next system starts.
 - [x] Allow worker jobs to read immutable snapshots and write only disjoint
       output ranges.
-- [ ] Add explicit per-worker scratch storage keyed by `WorkerId` before systems
-      need temporary output buffers.
+- [x] Add explicit per-worker scratch slot indexing keyed by `WorkerId` before
+      systems need temporary output buffers.
 - [x] Keep `StateTransitions`, state-stack mutation, SDL events, SDL window
       calls, and renderer ownership on the main thread.
 - [x] Record batch stats in a lightweight struct that debug overlay or logs can
@@ -398,9 +398,13 @@ Acceptance checks:
       the slice is considered complete.
 
 Core pass landed: this slice now has a pre-spawned app-owned `ThreadSystem`,
-explicit update/render contexts, synchronous `parallelFor`, and a serial renderer
-prep hook. Remaining unchecked work is the deeper adaptive scheduling policy and
-actual parallel CPU render-prep pipeline.
+explicit update/render contexts, synchronous `parallelFor`, adaptive per-batch
+background-worker participation, per-worker scratch slot indexing, and a serial
+renderer prep hook. Adaptive scheduling only changes how many already
+pre-spawned parked workers participate in each batch; workers are spawned during
+`ThreadSystem.init`, reused across frame batches, parked when idle, and joined
+only during `ThreadSystem.deinit`. Remaining unchecked work is the actual
+parallel CPU render-prep pipeline.
 
 ## Slice 8: Shader And Platform Expansion
 
@@ -538,10 +542,13 @@ behavior.
 Current foundation:
 
 - `ThreadSystem.parallelFor` runs synchronous range batches and returns only
-  after all workers finish.
+  after all selected workers finish.
+- `ThreadSystem.parallelForWithOptions` can align ranges to hot-column cache
+  boundaries and cap selected background workers for a specific processor.
 - `UpdateContext` passes `thread_system` into states.
-- `DataSystem` will provide persistent SoA slices for systems to process.
-- `src/core/simd.zig` will provide portable vector helpers.
+- `DataSystem` provides persistent 64-byte-aligned movement SoA slices for
+  systems to process.
+- `src/core/simd.zig` provides portable vector helpers.
 
 Performance notes:
 
@@ -551,6 +558,10 @@ Performance notes:
   small counts, tests, and fallback behavior, but the processor API and tests
   must prove that systems can split `DataSystem` slices through
   `ThreadSystem.parallelFor`.
+- Treat the current adaptive thread-system thresholds as a starting heuristic,
+  not a tuned policy. The first real processor should record whether selected
+  worker counts, range sizes, main-thread wait time, and worker utilization are
+  sensible under representative movement workloads before broadening the policy.
 - Treat cache-line behavior as part of the processor contract. SoA columns used
   by SIMD processors should have an explicit alignment policy before relying on
   wider loads or target-specific vector behavior.
@@ -585,7 +596,7 @@ Checklist:
       for small counts and deterministic tests.
 - [ ] Use SIMD inside each worker range and scalar-tail code for remainder
       elements.
-- [ ] Add an explicit alignment strategy for hot SoA columns before introducing
+- [x] Add an explicit alignment strategy for hot SoA columns before introducing
       wider or target-specific vector loads.
 - [ ] Audit thread-shared processor data for false sharing and add 64-byte
       padding only where concurrent writes justify it.
@@ -605,7 +616,7 @@ Acceptance checks:
 - [ ] The movement processor has test coverage for the serial path and the
       `ThreadSystem.parallelFor` path.
 - [ ] Worker jobs do not write outside their assigned `ParallelRange`.
-- [ ] Hot SoA columns used by SIMD processors have documented alignment behavior.
+- [x] Hot SoA columns used by SIMD processors have documented alignment behavior.
 - [ ] Thread-shared processor records that are concurrently written are either
       disjoint by design or padded/aligned to avoid false sharing.
 - [ ] Update processors perform no allocations during steady-state simulation.

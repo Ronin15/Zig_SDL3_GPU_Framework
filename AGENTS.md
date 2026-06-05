@@ -80,6 +80,7 @@ Add new code under the matching owner directory. Keep executable-only code near
 - `zig build dev` builds shaders, installs assets, and runs the app for normal development.
 - `zig build test` runs reusable module tests plus SDL-linked compile coverage.
 - `zig build check` compiles the game and GPU smoke executable without installing.
+- `zig build bench` runs non-interactive CPU entity and particle processor benchmarks.
 - `zig build verify` runs check, tests, and shader compilation.
 - `zig build shaders` compiles platform GPU shaders.
 - `zig build gpu-smoke` runs a display-gated SDL_GPU frame submission check.

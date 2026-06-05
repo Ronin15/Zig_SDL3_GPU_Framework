@@ -8,6 +8,7 @@ zig build run       # build, install assets/shaders, and run the app
 zig build dev       # build shaders, install assets, and run the app
 zig build check     # compile the game and GPU smoke executable
 zig build test      # run Zig unit tests
+zig build bench     # run CPU entity and particle processor benchmarks
 zig build verify    # run check, test, and shader compilation
 zig build package   # install selected-mode binaries and runtime assets
 ```
@@ -96,6 +97,25 @@ zig build verify
 ```
 
 `verify` runs compile coverage, unit tests, and shader compilation.
+
+## Benchmarks
+
+`zig build bench` runs non-interactive CPU benchmarks for the movement entity
+processor and transient particle processor. The default run automatically
+exercises serial, inline, fixed-worker, adaptive, small-grain, and large-grain
+thread-system cases. Movement runs a count sweep so threshold changes can be
+compared across entity counts; particles use one representative count per
+profile. Output is grouped by workload and count, then explains what to tune:
+per-system parallel thresholds, worker fanout, adaptive scheduling, and batch
+grain size. Use `--details` only when you need the supporting per-case timings.
+Use other optional arguments only to narrow or scale the run:
+
+```sh
+zig build bench -- --profile quick
+zig build bench -- --profile standard --iterations 100
+zig build bench -- --case thread-adaptive
+zig build bench -- --details
+```
 
 ## GPU Smoke
 

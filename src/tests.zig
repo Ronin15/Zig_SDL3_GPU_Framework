@@ -17,6 +17,9 @@ comptime {
     _ = @import("app/state.zig");
     _ = @import("app/thread_system.zig");
     _ = @import("app/time_loop.zig");
+    _ = @import("benchmarks/suite.zig");
+    _ = @import("benchmarks/movement.zig");
+    _ = @import("benchmarks/particles.zig");
     _ = @import("core/math.zig");
     _ = @import("core/logging.zig");
     _ = @import("core/simd.zig");

@@ -51,6 +51,15 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(u8, "log_level", @intFromEnum(log_level));
     build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
+    const bench_build_options = b.addOptions();
+    bench_build_options.addOption([]const u8, "app_name", app_name);
+    bench_build_options.addOption([]const u8, "window_title", window_title);
+    bench_build_options.addOption([]const u8, "asset_root", asset_root);
+    bench_build_options.addOption(bool, "gpu_debug", gpu_debug);
+    bench_build_options.addOption(bool, "debug_overlay", debug_overlay);
+    bench_build_options.addOption(u8, "log_level", @intFromEnum(std.log.Level.warn));
+    bench_build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
+
     const exe_mod = createGameModule(b, target, optimize, build_options);
 
     const exe = b.addExecutable(.{
@@ -64,6 +73,14 @@ pub fn build(b: *std.Build) void {
     const gpu_smoke_exe = b.addExecutable(.{
         .name = "gpu-smoke",
         .root_module = gpu_smoke_mod,
+        .use_llvm = force_llvm_lld,
+        .use_lld = force_llvm_lld,
+    });
+
+    const bench_mod = createSdlModule(b, target, optimize, bench_build_options, "src/benchmark_runner.zig");
+    const bench_exe = b.addExecutable(.{
+        .name = "benchmarks",
+        .root_module = bench_mod,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
@@ -119,6 +136,13 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
+
+    const bench_run = b.addRunArtifact(bench_exe);
+    if (b.args) |args| {
+        bench_run.addArgs(args);
+    }
+    const bench_step = b.step("bench", "Run CPU entity and particle processor benchmarks");
+    bench_step.dependOn(&bench_run.step);
 
     const verify_step = b.step("verify", "Run non-interactive checks for local development");
     verify_step.dependOn(check_step);

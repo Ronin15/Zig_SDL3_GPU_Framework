@@ -42,20 +42,13 @@ pub const Player = struct {
         return .{ .entity = entity };
     }
 
-    pub fn update(
+    pub fn applyInput(
         self: Player,
         data: *DataSystem,
         input: *const InputState,
-        delta_seconds: f32,
-        bounds_width: f32,
-        bounds_height: f32,
     ) !void {
         const body = data.movementBodyPtr(self.entity) orelse return error.MissingPlayerMovementBody;
         const facing = data.facingPtr(self.entity) orelse return error.MissingPlayerFacing;
-        const visual = data.primitiveVisualConst(self.entity) orelse return error.MissingPlayerVisual;
-
-        body.previous_x.* = body.position_x.*;
-        body.previous_y.* = body.position_y.*;
 
         const direction = input.movementVector();
         body.velocity_x.* = direction.x * body.speed.*;
@@ -69,14 +62,19 @@ pub const Player = struct {
         } else if (direction.y > 0) {
             facing.* = .down;
         }
+    }
+
+    pub fn clampToBounds(self: Player, data: *DataSystem, bounds_width: f32, bounds_height: f32) !void {
+        const body = data.movementBodyPtr(self.entity) orelse return error.MissingPlayerMovementBody;
+        const visual = data.primitiveVisualConst(self.entity) orelse return error.MissingPlayerVisual;
 
         body.position_x.* = math.clamp(
-            body.position_x.* + body.velocity_x.* * delta_seconds,
+            body.position_x.*,
             0,
             bounds_width - visual.size.x,
         );
         body.position_y.* = math.clamp(
-            body.position_y.* + body.velocity_y.* * delta_seconds,
+            body.position_y.*,
             0,
             bounds_height - visual.size.y,
         );
@@ -151,6 +149,7 @@ fn markerRect(position: math.Vec2, facing: Facing, visual: PrimitiveVisual) Rect
 
 test "player movement clamps to state bounds" {
     const std = @import("std");
+    const movement_system = @import("systems/movement.zig");
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -164,7 +163,9 @@ test "player movement clamps to state bounds" {
     input.setHeld(.moveRight, true);
     input.setHeld(.moveUp, true);
 
-    try player.update(&data, &input, 1.0, 800, 450);
+    try player.applyInput(&data, &input);
+    movement_system.updateSerial(&data, 1.0);
+    try player.clampToBounds(&data, 800, 450);
 
     const body = data.movementBodyConst(player.entity).?;
     try std.testing.expectEqual(@as(f32, 768), body.position.x);
@@ -180,10 +181,10 @@ test "player facing updates from movement and remains while idle" {
     var input = InputState{};
     input.setHeld(.moveUp, true);
 
-    try player.update(&data, &input, 0.0, 800, 450);
+    try player.applyInput(&data, &input);
     try std.testing.expectEqual(Facing.up, data.facingConst(player.entity).?.direction);
 
-    try player.update(&data, &InputState{}, 0.0, 800, 450);
+    try player.applyInput(&data, &InputState{});
     try std.testing.expectEqual(Facing.up, data.facingConst(player.entity).?.direction);
 }
 
@@ -197,7 +198,7 @@ test "player horizontal facing wins for diagonal movement" {
     input.setHeld(.moveRight, true);
     input.setHeld(.moveUp, true);
 
-    try player.update(&data, &input, 0.0, 800, 450);
+    try player.applyInput(&data, &input);
 
     try std.testing.expectEqual(Facing.right, data.facingConst(player.entity).?.direction);
 }

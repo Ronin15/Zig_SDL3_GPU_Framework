@@ -13,6 +13,7 @@ It builds target-native shaders at build time and renders through SDL_GPU.
 - Fixed-step 60Hz simulation with interpolated rendering for high-refresh displays
 - State-stack flow for gameplay screens, modal overlays, and pause behavior
 - Policy-based input routing for gameplay, app commands, UI, and debug actions
+- State-owned `DataSystem` storage with a SIMD-aware movement processor
 - Runtime asset loading from the installed asset directory with safe relative paths
 - Asset-backed SDL3_ttf text rendering with cached renderer textures
 - Linux and macOS shader pipeline: SPIR-V on Linux, Metal shaders on macOS

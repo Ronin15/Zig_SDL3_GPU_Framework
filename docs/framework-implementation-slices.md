@@ -549,6 +549,10 @@ Current foundation:
 - `DataSystem` provides persistent 64-byte-aligned movement SoA slices for
   systems to process.
 - `src/core/simd.zig` provides portable vector helpers.
+- `MovementSystem` integrates movement-body SoA columns through a serial path or
+  `ThreadSystem.parallelForWithOptions`.
+- `DemoState` spawns a few colored moving square entities so the processor has
+  visible non-player runtime coverage.
 
 Performance notes:
 
@@ -577,51 +581,58 @@ Performance notes:
 
 First system shape:
 
-- `MovementSystem` should be the first ECS processor. It reads and writes the
+- `MovementSystem` is the first ECS processor. It reads and writes the
   movement-body SoA slices in `DataSystem`, keeps a simple serial path for small
   counts and tests, and uses threaded SIMD ranges for larger batches.
 - `MovementSystem` must not create, destroy, add, or remove entities/components
   inside worker ranges. Any structural change needed by future systems should be
   deferred to a later command-buffer design.
-- The first implementation should prove the system contract before broadening
+- The first implementation proves the movement system contract before broadening
   into AI, collision, pathfinding, or render-prep processors.
 
 Checklist:
 
-- [ ] Define systems as data processors that accept `DataSystem`, `ThreadSystem`,
+- [x] Define systems as data processors that accept `DataSystem`, `ThreadSystem`,
       and fixed-step delta time rather than owning persistent data.
-- [ ] Add movement and particle processors that split dense SoA slices through
+- [x] Add a movement processor that splits dense SoA slices through
       `parallelFor`.
-- [ ] Wire `MovementSystem` through `ThreadSystem.parallelFor` with a serial path
+- [ ] Add particle processors that split dense SoA slices through `parallelFor`.
+- [x] Wire `MovementSystem` through `ThreadSystem.parallelFor` with a serial path
       for small counts and deterministic tests.
-- [ ] Use SIMD inside each worker range and scalar-tail code for remainder
+- [x] Use SIMD inside each worker range and scalar-tail code for remainder
       elements.
 - [x] Add an explicit alignment strategy for hot SoA columns before introducing
       wider or target-specific vector loads.
 - [ ] Audit thread-shared processor data for false sharing and add 64-byte
       padding only where concurrent writes justify it.
-- [ ] Ensure worker jobs write only to assigned disjoint ranges.
-- [ ] Ensure worker ranges avoid sharing writable cache lines in hot SoA columns.
+- [x] Ensure worker jobs write only to assigned disjoint ranges.
+- [x] Ensure worker ranges avoid sharing writable cache lines in hot SoA columns.
 - [ ] Keep state transitions, entity creation/removal, SDL calls, GPU calls,
       asset loading, and save/load streaming on the main thread.
 - [ ] Merge any per-worker output, event counts, or deferred structural changes
       on the main thread after the batch completes.
-- [ ] Keep normal 60Hz update paths allocation-free after initialization.
+- [x] Keep normal 60Hz update paths allocation-free after initialization.
 
 Acceptance checks:
 
-- [ ] Scalar and SIMD movement results match for representative data sets.
-- [ ] Serial and threaded processor results match for the same initial
+- [x] Scalar and SIMD movement results match for representative data sets.
+- [x] Serial and threaded processor results match for the same initial
       `DataSystem`.
-- [ ] The movement processor has test coverage for the serial path and the
+- [x] The movement processor has test coverage for the serial path and the
       `ThreadSystem.parallelFor` path.
-- [ ] Worker jobs do not write outside their assigned `ParallelRange`.
+- [x] Worker jobs do not write outside their assigned `ParallelRange`.
 - [x] Hot SoA columns used by SIMD processors have documented alignment behavior.
 - [ ] Thread-shared processor records that are concurrently written are either
       disjoint by design or padded/aligned to avoid false sharing.
-- [ ] Update processors perform no allocations during steady-state simulation.
-- [ ] Fixed-step update order remains deterministic: later systems always see
+- [x] Update processors perform no allocations during steady-state simulation.
+- [x] Fixed-step update order remains deterministic: later systems always see
       completed output from earlier systems.
+
+Movement pass landed: the demo maps player input to movement velocity, runs
+`MovementSystem` once over all movement bodies, and then applies player-only
+bounds clamping. A few colored moving squares are spawned as non-player
+processor coverage. Particle processors, per-worker output merging, and broader
+system expansion remain future Slice 11 work.
 
 ## Suggested Order
 

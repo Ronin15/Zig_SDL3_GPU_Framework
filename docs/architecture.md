@@ -23,6 +23,8 @@ behavior under `src/game/`.
   SoA stores for gameplay and render systems.
 - `src/game/player.zig` keeps player-specific input and facing behavior while
   storing persistent player data in `DataSystem`.
+- `src/game/systems/movement.zig` integrates movement-body SoA columns through
+  serial or threaded SIMD-aware ranges.
 - `src/platform/` contains shared SDL C imports and GPU smoke-test code.
 - `src/assets/assets.zig` resolves safe runtime asset paths, and `src/assets/cache.zig` caches renderer-backed runtime assets.
 - `src/core/` contains small shared helpers such as math primitives and portable SIMD aliases.
@@ -104,6 +106,12 @@ systems read immutable `DataSystem` slices during state render and submit draw
 calls through `Renderer`. `DataSystem` does not own SDL handles, GPU handles,
 live renderer texture IDs, asset leases, input frame state, thread-system state,
 transient events, or scratch buffers.
+
+`MovementSystem` is the first gameplay data processor. It updates all movement
+bodies as one ordered system, using SIMD lanes inside each assigned range and
+`ThreadSystem.parallelForWithOptions` when the batch is large enough. Worker
+ranges are aligned to movement cache-line boundaries and only write their
+assigned movement rows.
 
 The demo player is intentionally a special-case facade for player input and
 facing rules, backed by `DataSystem` data. Future enemies and other world

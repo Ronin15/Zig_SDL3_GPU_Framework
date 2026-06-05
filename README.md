@@ -10,25 +10,22 @@ The goal is a framework that stays easy to reason about while still covering the
 hard parts of a real-time 2D game: state flow, input routing, rendering,
 resource ownership, fixed-step simulation, and processor-friendly gameplay data.
 
-## Strengths
+## Features
 
-- **Predictable runtime flow:** a thin fixed-step main loop delegates app
-  coordination, state dispatch, pause policy, input, and rendering to clear
-  framework layers.
-- **SDL_GPU-first rendering:** game states draw through `Renderer`, while GPU
-  setup, shader loading, texture ownership, batching, and frame submission stay
-  in the rendering and platform code.
-- **Data-oriented architecture:** gameplay data lives in dense stores built for
-  direct processor iteration, so systems can work over clear, cache-friendly
-  component data instead of scattered state.
-- **Threaded and SIMD processors:** movement and particle updates use serial,
-  SIMD, and worker-thread paths where those execution modes fit the workload.
-- **Strong test coverage:** the test suite protects behavior that needs to stay
-  stable as the framework grows, including state transitions, input routing,
-  resource lifetime, renderer math, threaded batches, and SIMD/scalar parity.
-- **Practical runtime services:** assets load from traversal-safe relative paths,
-  PNG textures use core SDL3 loading, SDL3_ttf renders asset-backed text, and F2
-  toggles the local FPS overlay.
+- **Fixed-step runtime flow:** a thin main loop with app coordination, state
+  dispatch, pause policy, input routing, and interpolated rendering.
+- **SDL_GPU rendering:** a game-facing `Renderer` with shader loading, texture
+  ownership, sprite batching, and frame submission kept behind render/platform
+  boundaries.
+- **Data-oriented architecture:** dense component stores for direct,
+  cache-friendly processor iteration over gameplay data.
+- **Threaded and SIMD processors:** movement and particle updates with serial,
+  SIMD, and worker-thread execution paths.
+- **Comprehensive tests:** coverage for state transitions, input routing,
+  resource lifetime, renderer math, threaded batches, and SIMD/scalar parity so
+  framework behavior stays stable as it grows.
+- **Runtime asset and text services:** traversal-safe asset paths, core SDL3 PNG
+  loading, asset-backed SDL3_ttf text rendering, and an F2 FPS overlay.
 
 For deeper details, see [architecture](docs/architecture.md),
 [state stack and input](docs/state-stack-and-input.md), and

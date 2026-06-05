@@ -3,6 +3,8 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
+const logging = @import("../core/logging.zig");
+const log = logging.app;
 
 pub const WorkerId = struct {
     index: usize,
@@ -98,14 +100,21 @@ pub const ThreadSystem = struct {
         for (self.workers, 0..) |*worker, index| {
             worker.id = .{ .index = index + 1 };
             worker.shared = self.shared;
-            worker.thread = try std.Thread.spawn(.{
+            worker.thread = std.Thread.spawn(.{
                 .stack_size = self.config.stack_size,
                 .allocator = allocator,
-            }, workerMain, .{worker});
+            }, workerMain, .{worker}) catch |err| {
+                log.err("failed to spawn ThreadSystem worker {}: {}", .{ worker.id.index, err });
+                return err;
+            };
             self.scheduler.preferred_background_workers = if (self.workers.len > 0) 1 else 0;
             spawned += 1;
         }
 
+        log.debug(
+            "ThreadSystem initialized: background_workers={} min_parallel_items={} grain_size={} stack_size={}",
+            .{ self.workers.len, self.config.min_parallel_items, self.config.grain_size, self.config.stack_size },
+        );
         return self;
     }
 
@@ -349,7 +358,10 @@ fn normalizeConfig(config: ThreadSystemConfig) ThreadSystemConfig {
 
 fn resolveBackgroundWorkerCount(override_count: ?usize) !usize {
     if (override_count) |count| return count;
-    const cpu_count = std.Thread.getCpuCount() catch 1;
+    const cpu_count = std.Thread.getCpuCount() catch |err| {
+        log.warn("failed to query CPU count for ThreadSystem; using serial execution fallback: {}", .{err});
+        return 0;
+    };
     return if (cpu_count > 1) cpu_count - 1 else 0;
 }
 

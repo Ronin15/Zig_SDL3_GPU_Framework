@@ -28,7 +28,7 @@ pub fn createVertexTransferBuffer(device: *c.SDL_GPUDevice, vertex_capacity: usi
 pub fn stageVertices(device: *c.SDL_GPUDevice, transfer_buffer: *c.SDL_GPUTransferBuffer, vertices: []const sprite_batch.Vertex) !void {
     const bytes = std.mem.sliceAsBytes(vertices);
     const mapped = c.SDL_MapGPUTransferBuffer(device, transfer_buffer, true) orelse {
-        return error.SdlError;
+        return sdlError("SDL_MapGPUTransferBuffer");
     };
     const mapped_bytes = @as([*]u8, @ptrCast(mapped))[0..bytes.len];
     @memcpy(mapped_bytes, bytes);
@@ -43,7 +43,7 @@ pub fn recordVertexUpload(
 ) !void {
     const bytes = std.mem.sliceAsBytes(vertices);
     const copy_pass = c.SDL_BeginGPUCopyPass(command_buffer) orelse {
-        return error.SdlError;
+        return sdlError("SDL_BeginGPUCopyPass");
     };
     var source = c.SDL_GPUTransferBufferLocation{
         .transfer_buffer = transfer_buffer,

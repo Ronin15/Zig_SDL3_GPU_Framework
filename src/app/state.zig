@@ -446,7 +446,7 @@ pub const StateStack = struct {
 };
 
 fn initTestThreadSystem() !ThreadSystem {
-    return try ThreadSystem.init(std.testing.allocator, std.testing.io, .{ .max_background_workers = 0 });
+    return try ThreadSystem.init(std.testing.allocator, std.testing.io, .{ .max_worker_threads = 0 });
 }
 
 fn testUpdateContext(

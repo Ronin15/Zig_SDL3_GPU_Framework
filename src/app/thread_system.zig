@@ -26,13 +26,13 @@ pub const BatchStats = struct {
     range_count: usize = 0,
     grain_size: usize = 1,
     range_alignment_items: usize = 1,
-    /// Number of pre-spawned background workers available to the thread system.
-    available_background_workers: usize = 0,
-    /// Number of background worker threads used for this batch. The main thread
+    /// Number of pre-spawned worker threads available to the thread system.
+    available_worker_threads: usize = 0,
+    /// Number of worker threads used for this batch. The main thread
     /// is not included and may also process ranges.
-    background_worker_count: usize = 0,
+    active_worker_threads: usize = 0,
     main_thread_ranges: usize = 0,
-    background_worker_ranges: usize = 0,
+    worker_thread_ranges: usize = 0,
     worker_utilization: f32 = 0,
     batch_duration_ns: u64 = 0,
     main_thread_wait_ns: u64 = 0,
@@ -40,10 +40,10 @@ pub const BatchStats = struct {
 };
 
 pub const ThreadSystemConfig = struct {
-    /// Maximum background worker threads to pre-spawn. `null` uses
+    /// Maximum worker threads to pre-spawn. `null` uses
     /// `cpu_count - 1` so the main/render thread can be the final participant.
     /// Set to `0` to force serial execution.
-    max_background_workers: ?usize = null,
+    max_worker_threads: ?usize = null,
     stack_size: usize = std.Thread.SpawnConfig.default_stack_size,
     /// Batches smaller than this item count run on the main thread only.
     min_parallel_items: usize = 256,
@@ -55,7 +55,7 @@ pub const ThreadSystemConfig = struct {
 pub const ParallelForOptions = struct {
     min_parallel_items: ?usize = null,
     grain_size: ?usize = null,
-    max_background_workers: ?usize = null,
+    max_worker_threads: ?usize = null,
     range_alignment_items: usize = 1,
     adaptive: bool = true,
 };
@@ -70,12 +70,12 @@ pub const ThreadSystem = struct {
     scheduler: SchedulerState = .{},
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, config: ThreadSystemConfig) !ThreadSystem {
-        const background_worker_count = try resolveBackgroundWorkerCount(config.max_background_workers);
+        const worker_thread_count = try resolveWorkerThreadCount(config.max_worker_threads);
         const shared = try allocator.create(Shared);
         errdefer allocator.destroy(shared);
         shared.* = .{ .io = io };
 
-        const workers = try allocator.alloc(WorkerRecord, background_worker_count);
+        const workers = try allocator.alloc(WorkerRecord, worker_thread_count);
         errdefer allocator.free(workers);
 
         var self = ThreadSystem{
@@ -107,12 +107,12 @@ pub const ThreadSystem = struct {
                 log.err("failed to spawn ThreadSystem worker {}: {}", .{ worker.id.index, err });
                 return err;
             };
-            self.scheduler.preferred_background_workers = if (self.workers.len > 0) 1 else 0;
+            self.scheduler.preferred_worker_threads = if (self.workers.len > 0) 1 else 0;
             spawned += 1;
         }
 
         log.debug(
-            "ThreadSystem initialized: background_workers={} min_parallel_items={} grain_size={} stack_size={}",
+            "ThreadSystem initialized: worker_threads={} min_parallel_items={} grain_size={} stack_size={}",
             .{ self.workers.len, self.config.min_parallel_items, self.config.grain_size, self.config.stack_size },
         );
         return self;
@@ -133,7 +133,7 @@ pub const ThreadSystem = struct {
         self.* = undefined;
     }
 
-    pub fn backgroundWorkerCount(self: *const ThreadSystem) usize {
+    pub fn workerThreadCount(self: *const ThreadSystem) usize {
         return self.workers.len;
     }
 
@@ -168,30 +168,30 @@ pub const ThreadSystem = struct {
         const grain_size = alignItemCount(requested_grain_size, range_alignment_items);
         const min_parallel_items = options.min_parallel_items orelse self.config.min_parallel_items;
         const range_count = rangeCount(item_count, grain_size);
-        const max_background_workers = @min(options.max_background_workers orelse self.workers.len, self.workers.len);
+        const max_worker_threads = @min(options.max_worker_threads orelse self.workers.len, self.workers.len);
         var stats = BatchStats{
             .item_count = item_count,
             .range_count = range_count,
             .grain_size = grain_size,
             .range_alignment_items = range_alignment_items,
-            .available_background_workers = self.workers.len,
-            .background_worker_count = max_background_workers,
+            .available_worker_threads = self.workers.len,
+            .active_worker_threads = max_worker_threads,
         };
 
-        if (max_background_workers == 0 or item_count < min_parallel_items or range_count <= 1) {
-            stats.background_worker_count = 0;
+        if (max_worker_threads == 0 or item_count < min_parallel_items or range_count <= 1) {
+            stats.active_worker_threads = 0;
             runInline(item_count, grain_size, context, job_fn, &stats);
             self.scheduler.record(stats);
             return stats;
         }
 
-        const active_background_workers = self.scheduler.chooseActiveBackgroundWorkers(
-            max_background_workers,
+        const active_worker_threads = self.scheduler.chooseActiveWorkerThreads(
+            max_worker_threads,
             range_count,
             options.adaptive,
         );
-        if (active_background_workers == 0) {
-            stats.background_worker_count = 0;
+        if (active_worker_threads == 0) {
+            stats.active_worker_threads = 0;
             runInline(item_count, grain_size, context, job_fn, &stats);
             self.scheduler.record(stats);
             return stats;
@@ -209,20 +209,20 @@ pub const ThreadSystem = struct {
             .item_count = item_count,
             .grain_size = grain_size,
             .range_count = range_count,
-            .next_range = .init(active_background_workers),
-            .active_background_worker_count = active_background_workers,
-            .pending_workers = active_background_workers,
+            .next_range = .init(active_worker_threads),
+            .active_worker_thread_count = active_worker_threads,
+            .pending_workers = active_worker_threads,
             .context = context,
             .job_fn = job_fn,
             .main_thread_ranges = .init(0),
-            .background_worker_ranges = .init(0),
+            .worker_thread_ranges = .init(0),
         };
-        stats.background_worker_count = active_background_workers;
+        stats.active_worker_threads = active_worker_threads;
         stats.ran_inline = false;
 
         self.shared.mutex.unlock(self.shared.io);
 
-        for (self.workers[0..active_background_workers]) |*worker| {
+        for (self.workers[0..active_worker_threads]) |*worker| {
             worker.wake.post(self.shared.io);
         }
 
@@ -235,14 +235,14 @@ pub const ThreadSystem = struct {
         }
         const wait_end_ns = nowNs(self.shared.io);
         stats.main_thread_ranges = self.shared.batch.main_thread_ranges.load(.monotonic);
-        stats.background_worker_ranges = self.shared.batch.background_worker_ranges.load(.monotonic);
+        stats.worker_thread_ranges = self.shared.batch.worker_thread_ranges.load(.monotonic);
         self.shared.batch = .{};
         self.shared.mutex.unlock(self.shared.io);
 
         const batch_end_ns = nowNs(self.shared.io);
         stats.main_thread_wait_ns = elapsedNs(wait_start_ns, wait_end_ns);
         stats.batch_duration_ns = elapsedNs(batch_start_ns, batch_end_ns);
-        stats.worker_utilization = workerUtilization(stats.background_worker_ranges, active_background_workers, range_count);
+        stats.worker_utilization = workerUtilization(stats.worker_thread_ranges, active_worker_threads, range_count);
         self.scheduler.record(stats);
 
         return stats;
@@ -274,7 +274,7 @@ const Shared = struct {
 
             seen_batch_id = self.batch.id;
             const assigned_range_index = id.index - 1;
-            if (id.index > self.batch.active_background_worker_count or assigned_range_index >= self.batch.range_count) {
+            if (id.index > self.batch.active_worker_thread_count or assigned_range_index >= self.batch.range_count) {
                 self.mutex.unlock(self.io);
                 continue;
             }
@@ -304,7 +304,7 @@ const Shared = struct {
             if (id.index == 0) {
                 _ = self.batch.main_thread_ranges.fetchAdd(1, .monotonic);
             } else {
-                _ = self.batch.background_worker_ranges.fetchAdd(1, .monotonic);
+                _ = self.batch.worker_thread_ranges.fetchAdd(1, .monotonic);
             }
 
             job_fn(context, range, id);
@@ -318,7 +318,7 @@ const Shared = struct {
         if (id.index == 0) {
             _ = self.batch.main_thread_ranges.fetchAdd(1, .monotonic);
         } else {
-            _ = self.batch.background_worker_ranges.fetchAdd(1, .monotonic);
+            _ = self.batch.worker_thread_ranges.fetchAdd(1, .monotonic);
         }
 
         job_fn(context, range, id);
@@ -338,12 +338,12 @@ const Batch = struct {
     grain_size: usize = 1,
     range_count: usize = 0,
     next_range: std.atomic.Value(usize) = .init(0),
-    active_background_worker_count: usize = 0,
+    active_worker_thread_count: usize = 0,
     pending_workers: usize = 0,
     context: ?*anyopaque = null,
     job_fn: ?JobFn = null,
     main_thread_ranges: std.atomic.Value(usize) = .init(0),
-    background_worker_ranges: std.atomic.Value(usize) = .init(0),
+    worker_thread_ranges: std.atomic.Value(usize) = .init(0),
 };
 
 fn workerMain(worker: *WorkerRecord) void {
@@ -356,7 +356,7 @@ fn normalizeConfig(config: ThreadSystemConfig) ThreadSystemConfig {
     return normalized;
 }
 
-fn resolveBackgroundWorkerCount(override_count: ?usize) !usize {
+fn resolveWorkerThreadCount(override_count: ?usize) !usize {
     if (override_count) |count| return count;
     const cpu_count = std.Thread.getCpuCount() catch |err| {
         log.warn("failed to query CPU count for ThreadSystem; using serial execution fallback: {}", .{err});
@@ -400,21 +400,21 @@ fn elapsedNs(start_ns: i96, end_ns: i96) u64 {
     return if (end_ns > start_ns) @intCast(end_ns - start_ns) else 0;
 }
 
-fn workerUtilization(background_ranges: usize, active_background_workers: usize, range_count: usize) f32 {
-    if (active_background_workers == 0 or range_count == 0) return 0;
-    const expected_worker_ranges = @min(range_count, active_background_workers);
+fn workerUtilization(worker_thread_ranges: usize, active_worker_threads: usize, range_count: usize) f32 {
+    if (active_worker_threads == 0 or range_count == 0) return 0;
+    const expected_worker_ranges = @min(range_count, active_worker_threads);
     if (expected_worker_ranges == 0) return 0;
-    const actual: f32 = @floatFromInt(@min(background_ranges, range_count));
+    const actual: f32 = @floatFromInt(@min(worker_thread_ranges, range_count));
     const expected: f32 = @floatFromInt(range_count);
     return actual / expected;
 }
 
 const SchedulerState = struct {
-    preferred_background_workers: usize = 0,
+    preferred_worker_threads: usize = 0,
     last_batch_duration_ns: u64 = 0,
     last_main_thread_wait_ns: u64 = 0,
     last_worker_utilization: f32 = 0,
-    last_active_background_workers: usize = 0,
+    last_active_worker_threads: usize = 0,
 
     const busy_batch_ns: u64 = 100_000;
     const idle_batch_ns: u64 = 25_000;
@@ -422,15 +422,15 @@ const SchedulerState = struct {
     const low_utilization: f32 = 0.15;
     const ranges_per_participant: usize = 2;
 
-    fn chooseActiveBackgroundWorkers(
+    fn chooseActiveWorkerThreads(
         self: *SchedulerState,
-        available_background_workers: usize,
+        available_worker_threads: usize,
         range_count: usize,
         adaptive: bool,
     ) usize {
-        if (available_background_workers == 0 or range_count <= 1) return 0;
+        if (available_worker_threads == 0 or range_count <= 1) return 0;
 
-        const range_limited_workers = @min(available_background_workers, range_count - 1);
+        const range_limited_workers = @min(available_worker_threads, range_count - 1);
         if (!adaptive) return range_limited_workers;
 
         const desired_participants = @max(
@@ -438,14 +438,14 @@ const SchedulerState = struct {
             (range_count + ranges_per_participant - 1) / ranges_per_participant,
         );
         const range_target = @min(range_limited_workers, desired_participants - 1);
-        if (self.last_active_background_workers == 0) return range_target;
+        if (self.last_active_worker_threads == 0) return range_target;
 
-        var target = if (self.preferred_background_workers == 0) range_target else @min(self.preferred_background_workers, range_limited_workers);
+        var target = if (self.preferred_worker_threads == 0) range_target else @min(self.preferred_worker_threads, range_limited_workers);
         target = @max(@as(usize, 1), target);
 
         if (self.last_batch_duration_ns >= busy_batch_ns and
             self.last_worker_utilization >= high_utilization and
-            self.last_active_background_workers >= target)
+            self.last_active_worker_threads >= target)
         {
             target = @min(range_limited_workers, target + 1);
         } else if (self.last_batch_duration_ns <= idle_batch_ns or
@@ -461,9 +461,9 @@ const SchedulerState = struct {
         self.last_batch_duration_ns = stats.batch_duration_ns;
         self.last_main_thread_wait_ns = stats.main_thread_wait_ns;
         self.last_worker_utilization = stats.worker_utilization;
-        self.last_active_background_workers = stats.background_worker_count;
+        self.last_active_worker_threads = stats.active_worker_threads;
         if (!stats.ran_inline) {
-            self.preferred_background_workers = stats.background_worker_count;
+            self.preferred_worker_threads = stats.active_worker_threads;
         }
     }
 };
@@ -490,7 +490,7 @@ test "inline parallel for covers every item exactly once" {
     var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 8;
     var context = CoverageContext{ .hits = hits[0..] };
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 0,
+        .max_worker_threads = 0,
         .min_parallel_items = 1,
         .grain_size = 2,
     });
@@ -505,13 +505,13 @@ test "inline parallel for covers every item exactly once" {
     }
 }
 
-test "background worker parallel for covers every item exactly once" {
+test "worker thread parallel for covers every item exactly once" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
     var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 128;
     var context = CoverageContext{ .hits = hits[0..] };
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
         .min_parallel_items = 1,
         .grain_size = 1,
     });
@@ -521,20 +521,20 @@ test "background worker parallel for covers every item exactly once" {
 
     try std.testing.expect(!stats.ran_inline);
     try std.testing.expect(stats.main_thread_ranges > 0);
-    try std.testing.expect(stats.background_worker_ranges > 0);
+    try std.testing.expect(stats.worker_thread_ranges > 0);
     try std.testing.expect(context.worker_hits.load(.monotonic) > 0);
     for (&hits) |*hit| {
         try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
     }
 }
 
-test "small batches run inline even when background workers exist" {
+test "small batches run inline even when worker threads exist" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
     var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 8;
     var context = CoverageContext{ .hits = hits[0..] };
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 1,
+        .max_worker_threads = 1,
         .min_parallel_items = 64,
         .grain_size = 2,
     });
@@ -543,8 +543,8 @@ test "small batches run inline even when background workers exist" {
     const stats = threads.parallelFor(hits.len, &context, markCoverage);
 
     try std.testing.expect(stats.ran_inline);
-    try std.testing.expectEqual(@as(usize, 0), stats.background_worker_count);
-    try std.testing.expectEqual(@as(usize, 0), stats.background_worker_ranges);
+    try std.testing.expectEqual(@as(usize, 0), stats.active_worker_threads);
+    try std.testing.expectEqual(@as(usize, 0), stats.worker_thread_ranges);
     for (&hits) |*hit| {
         try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
     }
@@ -556,7 +556,7 @@ test "parallel for options cap active workers and align ranges" {
     var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 256;
     var context = CoverageContext{ .hits = hits[0..] };
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 3,
+        .max_worker_threads = 3,
         .min_parallel_items = 1,
         .grain_size = 1,
     });
@@ -565,16 +565,16 @@ test "parallel for options cap active workers and align ranges" {
     const stats = threads.parallelForWithOptions(hits.len, &context, markCoverage, .{
         .grain_size = 17,
         .range_alignment_items = 16,
-        .max_background_workers = 1,
+        .max_worker_threads = 1,
         .adaptive = false,
     });
 
     try std.testing.expect(!stats.ran_inline);
     try std.testing.expectEqual(@as(usize, 32), stats.grain_size);
     try std.testing.expectEqual(@as(usize, 16), stats.range_alignment_items);
-    try std.testing.expectEqual(@as(usize, 3), stats.available_background_workers);
-    try std.testing.expectEqual(@as(usize, 1), stats.background_worker_count);
-    try std.testing.expect(stats.background_worker_ranges > 0);
+    try std.testing.expectEqual(@as(usize, 3), stats.available_worker_threads);
+    try std.testing.expectEqual(@as(usize, 1), stats.active_worker_threads);
+    try std.testing.expect(stats.worker_thread_ranges > 0);
     for (&hits) |*hit| {
         try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
     }
@@ -583,46 +583,46 @@ test "parallel for options cap active workers and align ranges" {
 test "scheduler increases active workers after busy utilized batch" {
     var scheduler = SchedulerState{};
 
-    const first = scheduler.chooseActiveBackgroundWorkers(4, 32, true);
+    const first = scheduler.chooseActiveWorkerThreads(4, 32, true);
     try std.testing.expectEqual(@as(usize, 4), first);
 
-    scheduler.preferred_background_workers = 1;
+    scheduler.preferred_worker_threads = 1;
     scheduler.record(.{
         .item_count = 1024,
         .range_count = 32,
         .grain_size = 32,
-        .available_background_workers = 4,
-        .background_worker_count = 1,
-        .background_worker_ranges = 18,
+        .available_worker_threads = 4,
+        .active_worker_threads = 1,
+        .worker_thread_ranges = 18,
         .batch_duration_ns = SchedulerState.busy_batch_ns,
         .main_thread_wait_ns = 1,
         .worker_utilization = 0.56,
         .ran_inline = false,
     });
 
-    try std.testing.expectEqual(@as(usize, 2), scheduler.chooseActiveBackgroundWorkers(4, 32, true));
+    try std.testing.expectEqual(@as(usize, 2), scheduler.chooseActiveWorkerThreads(4, 32, true));
 }
 
 test "scheduler reduces active workers after cheap underutilized batch" {
-    var scheduler = SchedulerState{ .preferred_background_workers = 3 };
+    var scheduler = SchedulerState{ .preferred_worker_threads = 3 };
     scheduler.record(.{
         .item_count = 256,
         .range_count = 8,
         .grain_size = 32,
-        .available_background_workers = 4,
-        .background_worker_count = 3,
+        .available_worker_threads = 4,
+        .active_worker_threads = 3,
         .batch_duration_ns = SchedulerState.idle_batch_ns,
         .worker_utilization = 0.05,
         .ran_inline = false,
     });
 
-    try std.testing.expectEqual(@as(usize, 2), scheduler.chooseActiveBackgroundWorkers(4, 8, true));
-    try std.testing.expectEqual(@as(usize, 4), scheduler.chooseActiveBackgroundWorkers(4, 8, false));
+    try std.testing.expectEqual(@as(usize, 2), scheduler.chooseActiveWorkerThreads(4, 8, true));
+    try std.testing.expectEqual(@as(usize, 4), scheduler.chooseActiveWorkerThreads(4, 8, false));
 }
 
-test "worker scratch slots include main thread and background workers" {
+test "worker scratch slots include main thread and worker threads" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
     });
     defer threads.deinit();
 
@@ -633,7 +633,7 @@ test "worker scratch slots include main thread and background workers" {
 
 test "batch submission does not allocate after init" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 0,
+        .max_worker_threads = 0,
         .min_parallel_items = 1,
         .grain_size = 2,
     });

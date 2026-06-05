@@ -307,11 +307,11 @@ Architecture notes:
   It is for systems that need CPU work completed before the frame can continue.
 - There is one active batch at a time. A batch exposes an atomic range queue:
   participants claim the next `ParallelRange` with an atomic cursor.
-- Background workers park when idle. Do not add spin-wait configuration unless
+- Worker threads park when idle. Do not add spin-wait configuration unless
   measurement proves condition-variable wake latency is the bottleneck.
-- `max_background_workers` counts only pre-spawned background threads. The
+- `max_worker_threads` counts only pre-spawned worker threads. The
   main/render thread may also process ranges, so the default `cpu_count - 1`
-  background workers uses all normal CPU participants without oversubscription.
+  worker threads uses all normal CPU participants without oversubscription.
 - Long-lived async work such as asset streaming or file IO should use a
   separate service later instead of sharing this frame-bounded barrier path.
 
@@ -322,13 +322,13 @@ Thread-system design:
       deterministic `parallelFor` API.
 - [x] Own `ThreadSystem` from `Engine`; initialize it after SDL/app config is
       known and deinitialize it before allocator teardown.
-- [x] Pre-spawn up to `max_background_workers` background threads at init with
+- [x] Pre-spawn up to `max_worker_threads` worker threads at init with
       `std.Thread.spawn`.
       Never create or destroy OS threads during gameplay frames.
-- [x] Default background worker count to one fewer than
+- [x] Default worker thread count to one fewer than
       `std.Thread.getCpuCount()` when possible, reserving the main/render thread
-      as an additional batch participant; allow config override for background
-      worker count, stack size, minimum parallel item count, and grain size.
+      as an additional batch participant; allow config override for worker
+      thread count, stack size, minimum parallel item count, and grain size.
 - [x] Use preallocated worker records, one synchronous batch descriptor, and an
       atomic range cursor. No frame-batch submission may allocate after
       initialization.
@@ -544,7 +544,7 @@ Current foundation:
 - `ThreadSystem.parallelFor` runs synchronous range batches and returns only
   after all selected workers finish.
 - `ThreadSystem.parallelForWithOptions` can align ranges to hot-column cache
-  boundaries and cap selected background workers for a specific processor.
+  boundaries and cap selected worker threads for a specific processor.
 - `UpdateContext` passes `thread_system` into states.
 - `DataSystem` provides persistent 64-byte-aligned movement SoA slices for
   systems to process.

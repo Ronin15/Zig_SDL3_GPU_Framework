@@ -30,7 +30,7 @@ pub const ParticleSystemConfig = struct {
 pub const ParticleUpdateConfig = struct {
     min_parallel_items: ?usize = null,
     grain_size: ?usize = null,
-    max_background_workers: ?usize = null,
+    max_worker_threads: ?usize = null,
     adaptive: bool = true,
 };
 
@@ -344,7 +344,7 @@ pub const ParticleSystem = struct {
         const batch = thread_system.parallelForWithOptions(active_before, &context, particleJob, .{
             .min_parallel_items = update_config.min_parallel_items,
             .grain_size = update_config.grain_size,
-            .max_background_workers = update_config.max_background_workers,
+            .max_worker_threads = update_config.max_worker_threads,
             .range_alignment_items = particle_range_alignment_items,
             .adaptive = update_config.adaptive,
         });
@@ -808,7 +808,7 @@ test "threaded particle update matches serial update" {
     fillParticles(&serial_particles, particle_range_alignment_items * 8);
 
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
         .min_parallel_items = 1,
         .grain_size = particle_range_alignment_items,
     });
@@ -817,7 +817,7 @@ test "threaded particle update matches serial update" {
     const stats = threaded_particles.update(&threads, 0.25, .{
         .min_parallel_items = 1,
         .grain_size = particle_range_alignment_items,
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
         .adaptive = false,
     });
     _ = serial_particles.updateSerial(0.25);
@@ -857,7 +857,7 @@ test "warmed particle update and emission do not allocate" {
     fillParticles(&particles, 16);
 
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 0,
+        .max_worker_threads = 0,
         .min_parallel_items = 1,
         .grain_size = particle_range_alignment_items,
     });

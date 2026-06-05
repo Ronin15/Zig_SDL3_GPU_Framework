@@ -98,7 +98,7 @@ pub const Engine = struct {
         errdefer thread_system.deinit();
 
         log.debug(
-            "engine initialized: app=\"{s}\" logical={}x{} scale_mode={s} asset_root=\"{s}\" resizable={} high_pixel_density={} gpu_debug={} debug_overlay={} background_workers={}",
+            "engine initialized: app=\"{s}\" logical={}x{} scale_mode={s} asset_root=\"{s}\" resizable={} high_pixel_density={} gpu_debug={} debug_overlay={} worker_threads={}",
             .{
                 app_config.app_name,
                 logical_size.width,
@@ -109,7 +109,7 @@ pub const Engine = struct {
                 app_config.high_pixel_density,
                 app_config.gpu_debug,
                 build_options.debug_overlay,
-                thread_system.backgroundWorkerCount(),
+                thread_system.workerThreadCount(),
             },
         );
 

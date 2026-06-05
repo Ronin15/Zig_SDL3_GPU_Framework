@@ -13,7 +13,7 @@ const simd = @import("../../core/simd.zig");
 pub const MovementConfig = struct {
     min_parallel_items: ?usize = null,
     grain_size: ?usize = null,
-    max_background_workers: ?usize = null,
+    max_worker_threads: ?usize = null,
     adaptive: bool = true,
 };
 
@@ -38,7 +38,7 @@ pub fn update(
     const batch = thread_system.parallelForWithOptions(slice.entities.len, &context, movementJob, .{
         .min_parallel_items = config.min_parallel_items,
         .grain_size = config.grain_size,
-        .max_background_workers = config.max_background_workers,
+        .max_worker_threads = config.max_worker_threads,
         .range_alignment_items = data_mod.movement_range_alignment_items,
         .adaptive = config.adaptive,
     });
@@ -178,7 +178,7 @@ test "threaded movement matches serial movement" {
     try fillMovementData(&serial_data, data_mod.movement_range_alignment_items * 8);
 
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
         .min_parallel_items = 1,
         .grain_size = data_mod.movement_range_alignment_items,
     });
@@ -187,7 +187,7 @@ test "threaded movement matches serial movement" {
     const stats = update(&threaded_data, &threads, 0.5, .{
         .min_parallel_items = 1,
         .grain_size = data_mod.movement_range_alignment_items,
-        .max_background_workers = 2,
+        .max_worker_threads = 2,
         .adaptive = false,
     });
     updateSerial(&serial_data, 0.5);
@@ -227,7 +227,7 @@ test "warmed movement update does not allocate" {
     try fillMovementData(&data, 32);
 
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
-        .max_background_workers = 0,
+        .max_worker_threads = 0,
         .min_parallel_items = 1,
         .grain_size = data_mod.movement_range_alignment_items,
     });

@@ -77,15 +77,15 @@ current dispatch completes.
 `RenderContext`. Game states and future systems can use `parallelFor` for
 parallel CPU work that must finish before the next system or render phase.
 
-Workers are pre-spawned at startup. The default background worker count is based
+Worker threads are pre-spawned at startup. The default worker thread count is based
 on CPU count, with the main/render thread participating as an additional worker
 while it waits. Small batches run inline on the main thread, and batch
 submission does not allocate after initialization.
 
-Adaptive scheduling only changes how many already pre-spawned background workers
-participate in a batch. Workers are reused across frame batches, parked when
+Adaptive scheduling only changes how many already pre-spawned worker threads
+participate in a batch. Worker threads are reused across frame batches, parked when
 idle, and joined during `ThreadSystem` shutdown. Processor-specific batches can
-override grain size, cap selected background workers, and align range starts to
+override grain size, cap selected worker threads, and align range starts to
 hot-column boundaries through `parallelForWithOptions`.
 
 ## Gameplay Data

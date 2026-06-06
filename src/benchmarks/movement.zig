@@ -8,7 +8,8 @@ const ThreadSystem = thread_mod.ThreadSystem;
 const AdaptiveGrainTuner = thread_mod.AdaptiveGrainTuner;
 const data_mod = @import("../game/data_system.zig");
 const DataSystem = data_mod.DataSystem;
-const MovementSystem = @import("../game/systems/movement.zig");
+const movement = @import("../game/systems/movement.zig");
+const MovementSystem = movement.MovementSystem;
 const suite = @import("suite.zig");
 
 const delta_seconds: f32 = 1.0 / 60.0;
@@ -79,15 +80,16 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
         AdaptiveGrainTuner.init(benchmarkTunerConfig(data_mod.movement_range_alignment_items))
     else
         null;
+    var system = MovementSystem.init();
 
     for (0..options.warmup_iterations) |_| {
-        _ = runOnce(&data, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
+        _ = runOnce(&system, &data, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
     }
     var settled_before_measurement = false;
     if (grain_tuner) |*tuner| {
         var extra_warmup: usize = 0;
         while (!tuner.isSettled() and extra_warmup < benchmark_tuner_settle_warmup_cap) : (extra_warmup += 1) {
-            _ = runOnce(&data, if (threads) |*thread_system| thread_system else null, case, tuner);
+            _ = runOnce(&system, &data, if (threads) |*thread_system| thread_system else null, case, tuner);
         }
         settled_before_measurement = tuner.isSettled();
     }
@@ -95,7 +97,7 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
     var accumulator = suite.StatsAccumulator.init(item_count);
     for (0..options.iterations) |_| {
         const start_ns = suite.nowNs(io);
-        const batch = runOnce(&data, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
+        const batch = runOnce(&system, &data, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
         const end_ns = suite.nowNs(io);
         accumulator.record(suite.elapsedNs(start_ns, end_ns), batch);
     }
@@ -109,20 +111,32 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
     return stats;
 }
 
-fn runOnce(data: *DataSystem, thread_system: ?*ThreadSystem, case: suite.BenchmarkCase, grain_tuner: ?*AdaptiveGrainTuner) thread_mod.BatchStats {
+fn runOnce(
+    system: *MovementSystem,
+    data: *DataSystem,
+    thread_system: ?*ThreadSystem,
+    case: suite.BenchmarkCase,
+    grain_tuner: ?*AdaptiveGrainTuner,
+) thread_mod.BatchStats {
     if (!case.usesThreadSystem()) {
-        MovementSystem.updateSerial(data, delta_seconds);
+        movement.updateSerial(data, delta_seconds);
         return suite.serialBatch(data.movementBodySliceConst().entities.len, data_mod.movement_range_alignment_items);
     }
 
-    const stats = MovementSystem.update(data, thread_system.?, delta_seconds, .{
+    const stats = system.update(data, thread_system.?, delta_seconds, .{
         .min_parallel_items = 1,
-        .grain_size = case.grainSize(data_mod.movement_range_alignment_items),
+        .grain_size = benchmarkGrainSize(case),
         .max_worker_threads = case.maxWorkerThreads(),
         .adaptive = case.adaptive,
         .grain_tuner = grain_tuner,
     });
     return stats.batch;
+}
+
+fn benchmarkGrainSize(case: suite.BenchmarkCase) ?usize {
+    if (case.tuned_grain) return case.grainSize(data_mod.movement_range_alignment_items);
+    return case.grainSize(data_mod.movement_range_alignment_items) orelse
+        suite.alignItemCount(suite.default_grain_size, data_mod.movement_range_alignment_items);
 }
 
 fn benchmarkTunerConfig(range_alignment_items: usize) thread_mod.AdaptiveGrainTunerConfig {
@@ -153,6 +167,15 @@ test "movement benchmark tiny inline case runs without display" {
     const stats = try runCase(std.testing.allocator, std.testing.io, options, suite.default_cases[1], 1_024);
     try std.testing.expectEqual(suite.RunStatus.measured, stats.status);
     try std.testing.expect(stats.batch.ran_inline);
+}
+
+test "movement benchmark fixed cases use explicit grain controls" {
+    try std.testing.expectEqual(
+        suite.alignItemCount(suite.default_grain_size, data_mod.movement_range_alignment_items),
+        benchmarkGrainSize(suite.default_cases[4]).?,
+    );
+    try std.testing.expectEqual(@as(?usize, null), benchmarkGrainSize(suite.default_cases[6]));
+    try std.testing.expectEqual(suite.default_cases[7].grainSize(data_mod.movement_range_alignment_items).?, benchmarkGrainSize(suite.default_cases[7]).?);
 }
 
 test "movement benchmark profiles sweep multiple entity counts" {

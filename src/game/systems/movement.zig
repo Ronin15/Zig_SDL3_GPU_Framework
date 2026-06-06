@@ -27,11 +27,11 @@ pub const MovementStats = struct {
     batch: thread_mod.BatchStats = .{},
 };
 
-pub const Runtime = struct {
+pub const MovementSystem = struct {
     grain_tuner: AdaptiveGrainTuner = AdaptiveGrainTuner.init(.{}),
     adaptive_thread_count: AdaptiveThreadCount = .{},
 
-    pub fn init() Runtime {
+    pub fn init() MovementSystem {
         return .{
             .grain_tuner = AdaptiveGrainTuner.init(.{}),
             .adaptive_thread_count = .{},
@@ -39,23 +39,23 @@ pub const Runtime = struct {
     }
 
     pub fn update(
-        self: *Runtime,
+        self: *MovementSystem,
         data: *DataSystem,
         thread_system: *ThreadSystem,
         delta_seconds: f32,
         config: MovementConfig,
     ) MovementStats {
-        var runtime_config = config;
-        if (runtime_config.grain_size == null and runtime_config.grain_tuner == null) {
-            runtime_config.grain_tuner = &self.grain_tuner;
+        var system_config = config;
+        if (system_config.grain_size == null and system_config.grain_tuner == null) {
+            system_config.grain_tuner = &self.grain_tuner;
         }
-        if (runtime_config.adaptive and runtime_config.adaptive_thread_count == null) {
-            runtime_config.adaptive_thread_count = &self.adaptive_thread_count;
+        if (system_config.adaptive and system_config.adaptive_thread_count == null) {
+            system_config.adaptive_thread_count = &self.adaptive_thread_count;
         }
-        return movementUpdate(data, thread_system, delta_seconds, runtime_config);
+        return movementUpdate(data, thread_system, delta_seconds, system_config);
     }
 
-    pub fn syncPreviousPositions(_: *Runtime, data: *DataSystem) void {
+    pub fn syncPreviousPositions(_: *MovementSystem, data: *DataSystem) void {
         movementSyncPreviousPositions(data);
     }
 };
@@ -295,7 +295,7 @@ test "movement explicit grain bypasses tuner" {
     try std.testing.expectEqual(@as(u64, 0), grain_tuner.report().best_mean_batch_duration_ns);
 }
 
-test "movement runtime owns tuner for default update" {
+test "movement system owns tuner for default update" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
     var data = DataSystem.init(std.testing.allocator);
@@ -309,15 +309,44 @@ test "movement runtime owns tuner for default update" {
     });
     defer threads.deinit();
 
-    var runtime = Runtime.init();
-    const stats = runtime.update(&data, &threads, 0.5, .{
+    var system = MovementSystem.init();
+    const stats = system.update(&data, &threads, 0.5, .{
         .min_parallel_items = 1,
         .max_worker_threads = 2,
         .adaptive = false,
     });
 
     try std.testing.expect(!stats.batch.ran_inline);
-    try std.testing.expectEqual(@as(usize, 1), runtime.grain_tuner.report().sample_count);
+    try std.testing.expectEqual(@as(usize, 1), system.grain_tuner.report().sample_count);
+}
+
+test "movement system owns adaptive thread count for default update" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    try fillMovementData(&data, data_mod.movement_range_alignment_items * 8);
+
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .grain_size = data_mod.movement_range_alignment_items,
+    });
+    defer threads.deinit();
+
+    var system = MovementSystem.init();
+    system.adaptive_thread_count = .{
+        .last_batch_duration_ns = 100_000,
+    };
+    const stats = system.update(&data, &threads, 0.5, .{
+        .min_parallel_items = 1,
+        .grain_size = data_mod.movement_range_alignment_items,
+        .max_worker_threads = 2,
+    });
+
+    try std.testing.expect(!stats.batch.ran_inline);
+    try std.testing.expect(system.adaptive_thread_count.last_batch_duration_ns > 0);
+    try std.testing.expectEqual(@as(u64, 0), threads.adaptive_thread_count.last_batch_duration_ns);
 }
 
 test "movement update uses provided adaptive thread count" {

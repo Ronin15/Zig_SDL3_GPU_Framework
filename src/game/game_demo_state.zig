@@ -9,7 +9,7 @@ const data_mod = @import("data_system.zig");
 const DataSystem = data_mod.DataSystem;
 const EntityId = data_mod.EntityId;
 const Player = @import("player.zig").Player;
-const movement_system = @import("systems/movement.zig");
+const MovementSystem = @import("systems/movement.zig").MovementSystem;
 const ParticleSystem = @import("systems/particle.zig").ParticleSystem;
 const state_mod = @import("../app/state.zig");
 const RenderContext = state_mod.RenderContext;
@@ -22,7 +22,7 @@ const test_square_count = 4;
 pub const GameDemoState = struct {
     data: DataSystem,
     player: Player,
-    movement: movement_system.Runtime,
+    movement: MovementSystem,
     particles: ParticleSystem,
     test_squares: [test_square_count]EntityId,
     bounds_width: f32 = 800,
@@ -39,7 +39,7 @@ pub const GameDemoState = struct {
         return .{
             .data = data,
             .player = player,
-            .movement = movement_system.Runtime.init(),
+            .movement = MovementSystem.init(),
             .particles = particles,
             .test_squares = test_squares,
             .bounds_width = bounds_width,

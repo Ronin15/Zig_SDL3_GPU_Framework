@@ -149,7 +149,7 @@ fn markerRect(position: math.Vec2, facing: Facing, visual: PrimitiveVisual) Rect
 
 test "player movement clamps to state bounds" {
     const std = @import("std");
-    const movement_system = @import("systems/movement.zig");
+    const movement = @import("systems/movement.zig");
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -164,7 +164,7 @@ test "player movement clamps to state bounds" {
     input.setHeld(.moveUp, true);
 
     try player.applyInput(&data, &input);
-    movement_system.updateSerial(&data, 1.0);
+    movement.updateSerial(&data, 1.0);
     try player.clampToBounds(&data, 800, 450);
 
     const body = data.movementBodyConst(player.entity).?;

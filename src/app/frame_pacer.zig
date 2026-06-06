@@ -36,6 +36,14 @@ pub fn flagsFramePolicy(flags: c.SDL_WindowFlags) FramePolicy {
     };
 }
 
+pub fn gameplayBlockedPolicy(policy: FramePolicy) FramePolicy {
+    return .{
+        .can_render = policy.can_render,
+        .target_frame_ns = policy.target_frame_ns orelse fallback_frame_ns,
+        .should_pause_gameplay = true,
+    };
+}
+
 pub fn targetDelayNs(frame_start_ns: u64, now_ns: u64, target_frame_ns: u64) u64 {
     const elapsed_ns = if (now_ns > frame_start_ns) now_ns - frame_start_ns else 0;
     if (elapsed_ns >= target_frame_ns) return 0;
@@ -127,4 +135,18 @@ test "hidden and minimized windows skip rendering with the fallback frame cap" {
     try std.testing.expect(!minimized_policy.can_render);
     try std.testing.expectEqual(@as(?u64, fallback_frame_ns), minimized_policy.target_frame_ns);
     try std.testing.expect(minimized_policy.should_pause_gameplay);
+}
+
+test "gameplay blocked policy can keep visible rendering active" {
+    const std = @import("std");
+
+    const policy = gameplayBlockedPolicy(.{
+        .can_render = true,
+        .target_frame_ns = null,
+        .should_pause_gameplay = false,
+    });
+
+    try std.testing.expect(policy.can_render);
+    try std.testing.expectEqual(@as(?u64, fallback_frame_ns), policy.target_frame_ns);
+    try std.testing.expect(policy.should_pause_gameplay);
 }

@@ -106,6 +106,7 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Compile without installing");
     check_step.dependOn(&exe.step);
     check_step.dependOn(&gpu_smoke_exe.step);
+    check_step.dependOn(&bench_exe.step);
 
     const fmt_step = b.step("fmt", "Format Zig source files");
     fmt_step.dependOn(&b.addFmt(.{

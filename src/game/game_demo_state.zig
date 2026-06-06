@@ -102,6 +102,14 @@ pub const GameDemoState = struct {
     }
 
     pub fn onPause(self: *GameDemoState) void {
+        self.syncInterpolatedState();
+    }
+
+    pub fn onResume(self: *GameDemoState) void {
+        self.syncInterpolatedState();
+    }
+
+    fn syncInterpolatedState(self: *GameDemoState) void {
         var movement_slice = self.data.movementBodySlice();
         self.movement.syncPreviousPositions(&movement_slice);
         self.particles.syncPreviousPositions();

@@ -72,6 +72,7 @@ pub const State = struct {
         update: *const fn (*anyopaque, UpdateContext) anyerror!void,
         render: *const fn (*anyopaque, RenderContext) anyerror!void,
         on_pause: *const fn (*anyopaque) void,
+        on_resume: *const fn (*anyopaque) void,
         destroy: *const fn (*anyopaque, std.mem.Allocator) void,
     };
 
@@ -103,6 +104,13 @@ pub const State = struct {
                 self.onPause();
             }
 
+            fn adapterOnResume(state_ptr: *anyopaque) void {
+                const self: *T = @ptrCast(@alignCast(state_ptr));
+                if (@hasDecl(T, "onResume")) {
+                    self.onResume();
+                }
+            }
+
             fn adapterDestroy(state_ptr: *anyopaque, allocator: std.mem.Allocator) void {
                 const self: *T = @ptrCast(@alignCast(state_ptr));
                 self.deinit();
@@ -114,6 +122,7 @@ pub const State = struct {
                 .update = adapterUpdate,
                 .render = adapterRender,
                 .on_pause = adapterOnPause,
+                .on_resume = adapterOnResume,
                 .destroy = adapterDestroy,
             };
         };
@@ -138,6 +147,10 @@ pub const State = struct {
 
     pub fn onPause(self: State) void {
         self.vtable.on_pause(self.ptr);
+    }
+
+    pub fn onResume(self: State) void {
+        self.vtable.on_resume(self.ptr);
     }
 
     pub fn destroy(self: State, allocator: std.mem.Allocator) void {
@@ -337,6 +350,12 @@ pub const StateStack = struct {
     pub fn pauseActive(self: *StateStack) void {
         if (self.active()) |state| {
             state.onPause();
+        }
+    }
+
+    pub fn resumeActive(self: *StateStack) void {
+        if (self.active()) |state| {
+            state.onResume();
         }
     }
 

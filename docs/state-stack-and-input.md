@@ -51,6 +51,10 @@ pub const MyState = struct {
     pub fn onPause(self: *MyState) void {
         _ = self;
     }
+
+    pub fn onResume(self: *MyState) void {
+        _ = self;
+    }
 };
 ```
 

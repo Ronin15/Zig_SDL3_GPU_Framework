@@ -59,9 +59,12 @@ state methods directly; `Engine` builds the update/render contexts and
 `StateStack` decides which states receive events, updates, and render calls.
 
 Visible rendering is paced by SDL_GPU swapchain acquisition with the configured
-present mode. Hidden, minimized, or no-swapchain frames skip GPU rendering,
-enter pause, and use `SDL_DelayNS` fallback pacing. Occluded or unfocused visible
-windows keep rendering but apply a 60Hz cap to avoid background render runaway.
+present mode. Hidden and minimized frames skip GPU rendering, enter pause, and
+use `SDL_DelayNS` fallback pacing. A visible no-swapchain result enters a
+render-blocked gameplay pause before the next update, keeps using fallback
+pacing, and clears that policy after a later frame is submitted. Occluded or
+unfocused visible windows keep rendering but apply a 60Hz cap to avoid
+background render runaway.
 
 Each submitted frame computes presentation from the acquired SDL_GPU swapchain
 texture size and current SDL window size. World and logical UI draws are

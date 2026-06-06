@@ -84,13 +84,7 @@ pub const PauseState = struct {
 };
 
 fn drawScreenRect(renderer: *Renderer, rect: @import("../render/renderer.zig").Rect, color: config.Color, layer: i32) !void {
-    try renderer.drawSprite(.{
-        .texture = renderer.white_texture,
-        .dest = rect,
-        .tint = color,
-        .layer = layer,
-        .coordinate_space = .logical,
-    });
+    try renderer.drawRectInSpace(rect, color, layer, .logical);
 }
 
 fn drawPrompt(self: *PauseState, context: RenderContext) !void {

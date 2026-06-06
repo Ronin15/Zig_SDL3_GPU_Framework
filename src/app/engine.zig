@@ -49,6 +49,7 @@ pub const Engine = struct {
     input: InputState = .{},
     commands: FrameCommands = .{},
     running: bool = true,
+    swapchain_blocked: bool = false,
 
     pub fn init(process_init: std.process.Init, app_config: config.AppConfig) !Engine {
         validateConfig(app_config) catch |err| {
@@ -183,7 +184,9 @@ pub const Engine = struct {
     }
 
     pub fn framePolicy(self: *const Engine) frame_pacer.FramePolicy {
-        return frame_pacer.windowFramePolicy(self.window.handle);
+        const policy = frame_pacer.windowFramePolicy(self.window.handle);
+        if (self.swapchain_blocked) return frame_pacer.gameplayBlockedPolicy(policy);
+        return policy;
     }
 
     pub fn applyFrameControls(
@@ -237,6 +240,10 @@ pub const Engine = struct {
             try self.debug_overlay.render(&self.renderer);
             switch (try self.renderer.endFrame()) {
                 .submitted => {
+                    if (self.swapchain_blocked) {
+                        log.debug("swapchain available again; clearing render-blocked gameplay pause", .{});
+                    }
+                    self.swapchain_blocked = false;
                     self.debug_overlay.recordSubmittedFrame(frame_delta_ns);
                     if (frame_policy.target_frame_ns) |target_frame_ns| {
                         frame_pacer.paceTargetFrame(frame_start_ns, target_frame_ns);
@@ -246,11 +253,13 @@ pub const Engine = struct {
                     if (!self.pause.isPaused()) {
                         log.debug("swapchain unavailable; pausing gameplay and using fallback pacing", .{});
                     }
+                    self.swapchain_blocked = true;
                     try self.pause.enterPolicy(&self.states, &self.input, time_loop, self.nowNs());
                     frame_pacer.paceFallbackFrame(frame_start_ns);
                 },
             }
         } else {
+            self.swapchain_blocked = false;
             frame_pacer.paceFallbackFrame(frame_start_ns);
         }
     }

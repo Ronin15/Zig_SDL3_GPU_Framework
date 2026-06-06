@@ -95,7 +95,7 @@ pub const PauseController = struct {
         if (states.removeIfPresent(&self.handle)) {
             self.source = .none;
             input.releaseMovement();
-            states.pauseActive();
+            states.resumeActive();
             time_loop.reset(now_ns);
         }
     }
@@ -121,6 +121,7 @@ test "pause controller enter and exit are idempotent" {
 
     const TestingState = struct {
         pause_count: *u32,
+        resume_count: *u32,
 
         pub fn handleEvent(self: *@This(), event: *const @import("../platform/sdl.zig").c.SDL_Event, transitions: *StateTransitions) !bool {
             _ = self;
@@ -143,19 +144,24 @@ test "pause controller enter and exit are idempotent" {
             self.pause_count.* += 1;
         }
 
+        pub fn onResume(self: *@This()) void {
+            self.resume_count.* += 1;
+        }
+
         pub fn deinit(self: *@This()) void {
             _ = self;
         }
     };
 
     var pause_count: u32 = 0;
+    var resume_count: u32 = 0;
     var input = InputState{};
     input.setHeld(.moveRight, true);
     var time_loop = TimeLoop.init(0);
     time_loop.accumulator_ns = TimeLoop.fixed_delta_ns * 2;
     var states = StateStack.init(std.testing.allocator);
     defer states.deinit();
-    _ = try states.replaceGameplay(TestingState, .{ .pause_count = &pause_count });
+    _ = try states.replaceGameplay(TestingState, .{ .pause_count = &pause_count, .resume_count = &resume_count });
     var pause = PauseController.init(800, 450);
 
     try pause.enterUser(&states, &input, &time_loop, 10);
@@ -174,7 +180,8 @@ test "pause controller enter and exit are idempotent" {
 
     try std.testing.expect(!pause.isPaused());
     try std.testing.expectEqual(@as(usize, 1), states.len());
-    try std.testing.expectEqual(@as(u32, 2), pause_count);
+    try std.testing.expectEqual(@as(u32, 1), pause_count);
+    try std.testing.expectEqual(@as(u32, 1), resume_count);
     try std.testing.expectEqual(@as(u64, 30), time_loop.last_time_ns);
 }
 
@@ -234,6 +241,7 @@ test "pause controller exits only policy-owned pause when window restores" {
 
     const TestingState = struct {
         pause_count: *u32,
+        resume_count: *u32,
 
         pub fn handleEvent(self: *@This(), event: *const @import("../platform/sdl.zig").c.SDL_Event, transitions: *StateTransitions) !bool {
             _ = self;
@@ -256,17 +264,22 @@ test "pause controller exits only policy-owned pause when window restores" {
             self.pause_count.* += 1;
         }
 
+        pub fn onResume(self: *@This()) void {
+            self.resume_count.* += 1;
+        }
+
         pub fn deinit(self: *@This()) void {
             _ = self;
         }
     };
 
     var pause_count: u32 = 0;
+    var resume_count: u32 = 0;
     var input = InputState{};
     var time_loop = TimeLoop.init(0);
     var states = StateStack.init(std.testing.allocator);
     defer states.deinit();
-    _ = try states.replaceGameplay(TestingState, .{ .pause_count = &pause_count });
+    _ = try states.replaceGameplay(TestingState, .{ .pause_count = &pause_count, .resume_count = &resume_count });
     var pause = PauseController.init(800, 450);
 
     try pause.applyWindowPolicy(.{
@@ -283,6 +296,8 @@ test "pause controller exits only policy-owned pause when window restores" {
     }, &states, &input, &time_loop, 20);
     try std.testing.expect(!pause.isPaused());
     try std.testing.expectEqual(@as(usize, 1), states.len());
+    try std.testing.expectEqual(@as(u32, 1), pause_count);
+    try std.testing.expectEqual(@as(u32, 1), resume_count);
 
     try pause.enterUser(&states, &input, &time_loop, 30);
     try pause.applyWindowPolicy(.{

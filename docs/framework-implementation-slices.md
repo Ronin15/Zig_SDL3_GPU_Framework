@@ -56,7 +56,7 @@ Checklist:
 Acceptance checks:
 
 - [x] `zig build test` compiles the test root with the shared log policy.
-- [x] `zig build check` compiles the app and GPU smoke executable.
+- [x] `zig build check` compiles the app, GPU smoke, and benchmark executables.
 - [x] `zig build check --release=safe` verifies the release log-level default.
 - [x] Project-wide diagnostic audit confirms no meaningful subsystem still uses default-scope logging or noisy warning/error severity.
 
@@ -138,7 +138,9 @@ Acceptance checks:
 - [x] Existing demo renders correctly at the default 1280x720 logical size.
 - [x] Resizable windows preserve the configured scale policy.
 - [x] Letterbox offsets are centered and stable.
-- [x] Hidden/minimized/no-swapchain frame policy still behaves as before.
+- [x] Hidden/minimized windows still skip rendering and use fallback pacing;
+      visible no-swapchain frames enter render-blocked gameplay pause before
+      the next update.
 - [x] `zig build test`, `zig build check`, `zig build verify`, and
       `zig build gpu-smoke` cover unit, compile, shader, and one-frame GPU smoke
       validation. Manual `zig build dev` resize/pause smoke confirmed Retina
@@ -406,8 +408,9 @@ Acceptance checks:
 - [ ] Serial and parallel render prep produce identical vertex order, draw
       group order, layer ordering, and invalid-texture skipping for the same
       command input.
-- [x] Existing visible rendering remains swapchain/vsync paced, and
-      hidden/minimized/no-swapchain fallback pacing remains unchanged.
+- [x] Existing visible rendering remains swapchain/vsync paced, hidden/minimized
+      fallback pacing remains unchanged, and visible no-swapchain results block
+      gameplay before the next update.
 - [x] `zig build test`, `zig build check`, and `zig build verify` pass before
       the slice is considered complete.
 

@@ -146,11 +146,16 @@ pub const Renderer = struct {
     }
 
     pub fn drawRect(self: *Renderer, rect: Rect, color: config.Color, layer: i32) !void {
+        try self.drawRectInSpace(rect, color, layer, .world);
+    }
+
+    pub fn drawRectInSpace(self: *Renderer, rect: Rect, color: config.Color, layer: i32, coordinate_space: CoordinateSpace) !void {
         try self.drawSprite(.{
             .texture = self.white_texture,
             .dest = rect,
             .tint = color,
             .layer = layer,
+            .coordinate_space = coordinate_space,
         });
     }
 

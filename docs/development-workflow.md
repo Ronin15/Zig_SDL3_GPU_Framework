@@ -6,7 +6,7 @@
 zig build           # build and install a runnable app into zig-out/bin
 zig build run       # build, install assets/shaders, and run the app
 zig build dev       # build shaders, install assets, and run the app
-zig build check     # compile the game and GPU smoke executable
+zig build check     # compile the game, GPU smoke, and benchmark executables
 zig build test      # run Zig unit tests
 zig build bench     # run CPU entity and particle processor benchmarks
 zig build verify    # run check, test, and shader compilation

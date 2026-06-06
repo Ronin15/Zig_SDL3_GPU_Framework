@@ -24,7 +24,7 @@ resource ownership, fixed-step simulation, and processor-friendly gameplay data.
 - **Threaded and SIMD processors:** movement and particle updates with serial,
   SIMD, and worker-thread execution paths.
 - **Comprehensive tests:** coverage for state transitions, input routing,
-  resource lifetime, renderer math, threaded batches, and SIMD/scalar parity so
+  resource lifetime, renderer math, threaded CPU range batches, and SIMD/scalar parity so
   framework behavior stays stable as it grows.
 - **Runtime asset and text services:** traversal-safe asset paths, core SDL3 PNG
   loading, asset-backed SDL3_ttf text rendering, and an F2 FPS overlay.

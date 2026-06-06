@@ -17,7 +17,7 @@ live under `src/render/gpu/` and load the shader files matching
 
 ## Sprite Rendering
 
-Sprites and colored rectangles are collected into a CPU batch, uploaded to one
+Sprites and colored rectangles are collected into a CPU sprite batch, uploaded to one
 GPU vertex buffer per frame, sorted by layer and submission order, and submitted
 by texture and coordinate-presentation groups. Texture ownership is tracked with
 generational `TextureId` values so stale or destroyed IDs are rejected

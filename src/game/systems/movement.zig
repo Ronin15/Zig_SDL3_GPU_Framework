@@ -6,7 +6,7 @@ const std = @import("std");
 const thread_mod = @import("../../app/thread_system.zig");
 const ThreadSystem = thread_mod.ThreadSystem;
 const ParallelRange = thread_mod.ParallelRange;
-const AdaptiveGrainTuner = thread_mod.AdaptiveGrainTuner;
+const AdaptiveRangeTuner = thread_mod.AdaptiveRangeTuner;
 const AdaptiveThreadCount = thread_mod.AdaptiveThreadCount;
 const data_mod = @import("../data_system.zig");
 const DataSystem = data_mod.DataSystem;
@@ -15,11 +15,11 @@ const simd = @import("../../core/simd.zig");
 
 pub const MovementConfig = struct {
     min_parallel_items: ?usize = null,
-    grain_size: ?usize = null,
+    items_per_range: ?usize = null,
     max_worker_threads: ?usize = null,
     adaptive: bool = true,
     adaptive_thread_count: ?*AdaptiveThreadCount = null,
-    grain_tuner: ?*AdaptiveGrainTuner = null,
+    range_tuner: ?*AdaptiveRangeTuner = null,
 };
 
 pub const MovementStats = struct {
@@ -28,12 +28,12 @@ pub const MovementStats = struct {
 };
 
 pub const MovementSystem = struct {
-    grain_tuner: AdaptiveGrainTuner = AdaptiveGrainTuner.init(.{}),
+    range_tuner: AdaptiveRangeTuner = AdaptiveRangeTuner.init(.{}),
     adaptive_thread_count: AdaptiveThreadCount = .{},
 
     pub fn init() MovementSystem {
         return .{
-            .grain_tuner = AdaptiveGrainTuner.init(.{}),
+            .range_tuner = AdaptiveRangeTuner.init(.{}),
             .adaptive_thread_count = .{},
         };
     }
@@ -46,8 +46,8 @@ pub const MovementSystem = struct {
         config: MovementConfig,
     ) MovementStats {
         var system_config = config;
-        if (system_config.grain_size == null and system_config.grain_tuner == null) {
-            system_config.grain_tuner = &self.grain_tuner;
+        if (system_config.items_per_range == null and system_config.range_tuner == null) {
+            system_config.range_tuner = &self.range_tuner;
         }
         if (system_config.adaptive and system_config.adaptive_thread_count == null) {
             system_config.adaptive_thread_count = &self.adaptive_thread_count;
@@ -82,14 +82,14 @@ fn movementUpdate(
         .slice = slice,
         .delta_seconds = delta_seconds,
     };
-    const active_tuner = if (config.grain_size == null) config.grain_tuner else null;
-    const grain_size = if (active_tuner) |tuner|
-        tuner.grainSize(slice.entities.len, data_mod.movement_range_alignment_items)
+    const active_tuner = if (config.items_per_range == null) config.range_tuner else null;
+    const items_per_range = if (active_tuner) |tuner|
+        tuner.itemsPerRange(slice.entities.len, data_mod.movement_range_alignment_items)
     else
-        config.grain_size;
+        config.items_per_range;
     const batch = thread_system.parallelForWithOptions(slice.entities.len, &context, movementJob, .{
         .min_parallel_items = config.min_parallel_items,
-        .grain_size = grain_size,
+        .items_per_range = items_per_range,
         .max_worker_threads = config.max_worker_threads,
         .range_alignment_items = data_mod.movement_range_alignment_items,
         .adaptive = config.adaptive,
@@ -240,30 +240,30 @@ test "threaded movement matches serial movement" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
-    var grain_tuner = AdaptiveGrainTuner.init(.{
-        .initial_grain_size = data_mod.movement_range_alignment_items,
-        .min_grain_size = data_mod.movement_range_alignment_items,
-        .max_grain_size = data_mod.movement_range_alignment_items * 4,
+    var range_tuner = AdaptiveRangeTuner.init(.{
+        .initial_items_per_range = data_mod.movement_range_alignment_items,
+        .min_items_per_range = data_mod.movement_range_alignment_items,
+        .max_items_per_range = data_mod.movement_range_alignment_items * 4,
     });
     const stats = update(&threaded_data, &threads, 0.5, .{
         .min_parallel_items = 1,
         .max_worker_threads = 2,
         .adaptive = false,
-        .grain_tuner = &grain_tuner,
+        .range_tuner = &range_tuner,
     });
     updateSerial(&serial_data, 0.5);
 
     try std.testing.expectEqual(serial_data.movementBodySliceConst().entities.len, stats.body_count);
     try std.testing.expect(!stats.batch.ran_inline);
-    try std.testing.expectEqual(data_mod.movement_range_alignment_items, stats.batch.grain_size);
+    try std.testing.expectEqual(data_mod.movement_range_alignment_items, stats.batch.items_per_range);
     try expectMovementDataApproxEqual(&threaded_data, &serial_data);
 }
 
-test "movement explicit grain bypasses tuner" {
+test "movement explicit items_per_range bypasses tuner" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
     var data = DataSystem.init(std.testing.allocator);
@@ -273,26 +273,26 @@ test "movement explicit grain bypasses tuner" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
-    var grain_tuner = AdaptiveGrainTuner.init(.{
-        .initial_grain_size = data_mod.movement_range_alignment_items * 2,
-        .min_grain_size = data_mod.movement_range_alignment_items,
-        .max_grain_size = data_mod.movement_range_alignment_items * 4,
+    var range_tuner = AdaptiveRangeTuner.init(.{
+        .initial_items_per_range = data_mod.movement_range_alignment_items * 2,
+        .min_items_per_range = data_mod.movement_range_alignment_items,
+        .max_items_per_range = data_mod.movement_range_alignment_items * 4,
     });
     const stats = update(&data, &threads, 0.5, .{
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
         .max_worker_threads = 2,
         .adaptive = false,
-        .grain_tuner = &grain_tuner,
+        .range_tuner = &range_tuner,
     });
 
-    try std.testing.expectEqual(data_mod.movement_range_alignment_items, stats.batch.grain_size);
-    try std.testing.expectEqual(@as(usize, 0), grain_tuner.report().sample_count);
-    try std.testing.expectEqual(@as(u64, 0), grain_tuner.report().best_mean_batch_duration_ns);
+    try std.testing.expectEqual(data_mod.movement_range_alignment_items, stats.batch.items_per_range);
+    try std.testing.expectEqual(@as(usize, 0), range_tuner.report().sample_count);
+    try std.testing.expectEqual(@as(u64, 0), range_tuner.report().best_mean_batch_duration_ns);
 }
 
 test "movement system owns tuner for default update" {
@@ -305,7 +305,7 @@ test "movement system owns tuner for default update" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
@@ -317,7 +317,7 @@ test "movement system owns tuner for default update" {
     });
 
     try std.testing.expect(!stats.batch.ran_inline);
-    try std.testing.expectEqual(@as(usize, 1), system.grain_tuner.report().sample_count);
+    try std.testing.expectEqual(@as(usize, 1), system.range_tuner.report().sample_count);
 }
 
 test "movement system owns adaptive thread count for default update" {
@@ -330,7 +330,7 @@ test "movement system owns adaptive thread count for default update" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
@@ -340,7 +340,7 @@ test "movement system owns adaptive thread count for default update" {
     };
     const stats = system.update(&data, &threads, 0.5, .{
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
         .max_worker_threads = 2,
     });
 
@@ -359,7 +359,7 @@ test "movement update uses provided adaptive thread count" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
@@ -409,7 +409,7 @@ test "warmed movement update does not allocate" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 0,
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     defer threads.deinit();
 
@@ -425,7 +425,7 @@ test "warmed movement update does not allocate" {
 
     const stats = update(&data, &threads, 0.016, .{
         .min_parallel_items = 1,
-        .grain_size = data_mod.movement_range_alignment_items,
+        .items_per_range = data_mod.movement_range_alignment_items,
     });
     try std.testing.expectEqual(@as(usize, 32), stats.body_count);
     try std.testing.expect(stats.batch.ran_inline);

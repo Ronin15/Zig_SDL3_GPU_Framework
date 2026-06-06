@@ -27,7 +27,7 @@ pipeline with sprite batching and GPU helpers.
   integer-fit, stretch, and overscan presentation from drawable size and window
   size. World and logical draws are transformed through the presentation while
   overlay drawing can stay in drawable pixels.
-- Added a pre-spawned `ThreadSystem` that runs synchronous parallel batches,
+- Added a pre-spawned `ThreadSystem` that runs synchronous CPU range batches,
   reuses parked workers across frames, lets the main thread participate while
   waiting, and exposes deterministic range splitting for CPU processors.
 - Added `src/game/data_system.zig` as the persistent gameplay storage
@@ -35,7 +35,7 @@ pipeline with sprite batching and GPU helpers.
   stale-ID rejection, and explicit state-local ownership.
 - Added `src/core/simd.zig` plus SIMD-aware movement and particle processors
   that operate directly on SoA slices with scalar tails, serial fallback paths,
-  and threaded range execution for larger batches.
+  and threaded range execution for larger CPU batches.
 - Added `src/render/resources.zig`, `src/render/sprite_batch.zig`, and GPU
   helper modules so renderer resources use generational texture IDs, sprite
   batching stays allocation-free after warmup, and texture upload/validation

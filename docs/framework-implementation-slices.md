@@ -339,7 +339,8 @@ Thread-system design:
 - [x] Default worker thread count to one fewer than
       `std.Thread.getCpuCount()` when possible, reserving the main/render thread
       as an additional batch participant; allow config override for worker
-      thread count, stack size, minimum parallel item count, and grain size.
+      thread count, stack size, minimum parallel item count, and items per
+      claimed range (`items_per_range`).
 - [x] Use preallocated worker records, one synchronous batch descriptor, and an
       atomic range cursor. No frame-batch submission may allocate after
       initialization.

@@ -131,8 +131,8 @@ Batches forced inline by `min_parallel_items`, unavailable workers, or a single
 range still report their own timing, but they do not train adaptive thread-count
 state. Worker threads are reused across frame batches, parked when idle, and
 joined during `ThreadSystem` shutdown. Processor-specific batches can override
-grain size, cap selected worker threads, and align range starts to hot-column
-boundaries through `parallelForWithOptions`.
+items per claimed range (`items_per_range`), cap selected worker threads, and align
+range starts to hot-column boundaries through `parallelForWithOptions`.
 
 ## Gameplay Data
 

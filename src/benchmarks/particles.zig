@@ -5,7 +5,7 @@
 const std = @import("std");
 const thread_mod = @import("../app/thread_system.zig");
 const ThreadSystem = thread_mod.ThreadSystem;
-const AdaptiveGrainTuner = thread_mod.AdaptiveGrainTuner;
+const AdaptiveRangeTuner = thread_mod.AdaptiveRangeTuner;
 const math = @import("../core/math.zig");
 const particle_mod = @import("../game/systems/particle.zig");
 const ParticleSystem = particle_mod.ParticleSystem;
@@ -75,21 +75,21 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
         threads = try ThreadSystem.init(allocator, io, .{
             .max_worker_threads = case.maxWorkerThreads(),
             .min_parallel_items = 1,
-            .grain_size = suite.default_grain_size,
+            .items_per_range = suite.default_items_per_range,
         });
     }
     defer if (threads) |*thread_system| thread_system.deinit();
 
-    var grain_tuner: ?AdaptiveGrainTuner = if (case.tuned_grain)
-        AdaptiveGrainTuner.init(benchmarkTunerConfig(particle_mod.particle_range_alignment_items))
+    var range_tuner: ?AdaptiveRangeTuner = if (case.tuned_range)
+        AdaptiveRangeTuner.init(benchmarkTunerConfig(particle_mod.particle_range_alignment_items))
     else
         null;
 
     for (0..options.warmup_iterations) |_| {
-        _ = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
+        _ = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case, if (range_tuner) |*tuner| tuner else null);
     }
     var settled_before_measurement = false;
-    if (grain_tuner) |*tuner| {
+    if (range_tuner) |*tuner| {
         var extra_warmup: usize = 0;
         while (!tuner.isSettled() and extra_warmup < benchmark_tuner_settle_warmup_cap) : (extra_warmup += 1) {
             _ = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case, tuner);
@@ -100,45 +100,45 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
     var accumulator = suite.StatsAccumulator.init(item_count);
     for (0..options.iterations) |_| {
         const start_ns = suite.nowNs(io);
-        const batch = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case, if (grain_tuner) |*tuner| tuner else null);
+        const batch = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case, if (range_tuner) |*tuner| tuner else null);
         const end_ns = suite.nowNs(io);
         accumulator.record(suite.elapsedNs(start_ns, end_ns), batch);
     }
 
     var stats = accumulator.finish();
-    if (grain_tuner) |*tuner| {
-        var summary = suite.grainTuningSummary(tuner.report());
+    if (range_tuner) |*tuner| {
+        var summary = suite.rangeTuningSummary(tuner.report());
         summary.settled_before_measurement = settled_before_measurement;
-        stats.grain_tuning = summary;
+        stats.range_tuning = summary;
     }
     return stats;
 }
 
-fn runOnce(particles: *ParticleSystem, thread_system: ?*ThreadSystem, case: suite.BenchmarkCase, grain_tuner: ?*AdaptiveGrainTuner) thread_mod.BatchStats {
+fn runOnce(particles: *ParticleSystem, thread_system: ?*ThreadSystem, case: suite.BenchmarkCase, range_tuner: ?*AdaptiveRangeTuner) thread_mod.BatchStats {
     if (!case.usesThreadSystem()) {
         return particles.updateSerial(delta_seconds).batch;
     }
 
     return particles.update(thread_system.?, delta_seconds, .{
         .min_parallel_items = 1,
-        .grain_size = benchmarkGrainSize(case),
+        .items_per_range = benchmarkItemsPerRange(case),
         .max_worker_threads = case.maxWorkerThreads(),
         .adaptive = case.adaptive,
-        .grain_tuner = grain_tuner,
+        .range_tuner = range_tuner,
     }).batch;
 }
 
-fn benchmarkGrainSize(case: suite.BenchmarkCase) ?usize {
-    if (case.tuned_grain) return case.grainSize(particle_mod.particle_range_alignment_items);
-    return case.grainSize(particle_mod.particle_range_alignment_items) orelse
-        suite.alignItemCount(suite.default_grain_size, particle_mod.particle_range_alignment_items);
+fn benchmarkItemsPerRange(case: suite.BenchmarkCase) ?usize {
+    if (case.tuned_range) return case.itemsPerRange(particle_mod.particle_range_alignment_items);
+    return case.itemsPerRange(particle_mod.particle_range_alignment_items) orelse
+        suite.alignItemCount(suite.default_items_per_range, particle_mod.particle_range_alignment_items);
 }
 
-fn benchmarkTunerConfig(range_alignment_items: usize) thread_mod.AdaptiveGrainTunerConfig {
+fn benchmarkTunerConfig(range_alignment_items: usize) thread_mod.AdaptiveRangeTunerConfig {
     return .{
-        .initial_grain_size = suite.default_grain_size,
-        .min_grain_size = range_alignment_items,
-        .max_grain_size = suite.default_grain_size * 64,
+        .initial_items_per_range = suite.default_items_per_range,
+        .min_items_per_range = range_alignment_items,
+        .max_items_per_range = suite.default_items_per_range * 64,
         .sample_window = 2,
         .improvement_threshold_percent = 5,
         .settle_after_failed_probes = 2,
@@ -163,13 +163,13 @@ test "particle benchmark tiny inline case runs without display" {
     try std.testing.expect(stats.batch.ran_inline);
 }
 
-test "particle benchmark fixed cases use explicit grain controls" {
+test "particle benchmark fixed cases use explicit range controls" {
     try std.testing.expectEqual(
-        suite.alignItemCount(suite.default_grain_size, particle_mod.particle_range_alignment_items),
-        benchmarkGrainSize(suite.default_cases[4]).?,
+        suite.alignItemCount(suite.default_items_per_range, particle_mod.particle_range_alignment_items),
+        benchmarkItemsPerRange(suite.default_cases[4]).?,
     );
-    try std.testing.expectEqual(@as(?usize, null), benchmarkGrainSize(suite.default_cases[6]));
-    try std.testing.expectEqual(suite.default_cases[7].grainSize(particle_mod.particle_range_alignment_items).?, benchmarkGrainSize(suite.default_cases[7]).?);
+    try std.testing.expectEqual(@as(?usize, null), benchmarkItemsPerRange(suite.default_cases[6]));
+    try std.testing.expectEqual(suite.default_cases[7].itemsPerRange(particle_mod.particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[7]).?);
 }
 
 test "particle benchmark fixture keeps long-lived particles active after update" {

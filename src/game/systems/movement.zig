@@ -60,7 +60,7 @@ pub const MovementSystem = struct {
     }
 };
 
-pub fn update(
+fn update(
     data: *DataSystem,
     thread_system: *ThreadSystem,
     delta_seconds: f32,

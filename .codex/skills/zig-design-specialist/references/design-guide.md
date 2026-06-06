@@ -39,6 +39,11 @@ repo. Keep the final design compact, but make the decisions below explicit.
 - Define each processor's reads, writes, output buffers, and order relative to
   other processors. Later processors must see completed output from earlier
   processors.
+- For threaded processors that produce high-volume events, intents, contacts, or
+  deferred structural commands, define stable input order, range ownership,
+  merge order, allocation policy, and structural apply point. Prefer typed
+  range-owned output buffers with count/prefix/write collection over global
+  per-command append or callback-style event buses.
 - Keep structural entity/component changes out of worker ranges. Use a deferred
   main-thread command boundary when a processor needs to request creation,
   removal, state transitions, asset loading, save/load, or renderer ownership
@@ -55,6 +60,10 @@ repo. Keep the final design compact, but make the decisions below explicit.
 - Worker ranges should write disjoint rows and avoid sharing writable cache
   lines in hot SoA columns. Use 64-byte padding only for concurrently written
   thread-shared records where false sharing is a real risk.
+- Deterministic output order should come from stable input or range order, not
+  worker timing or worker IDs. When output volume can be large, collect counts
+  per range, prefix offsets, write contiguous typed output, then merge by range
+  index before any batch commit.
 - Move allocation, string lookup, hash-map lookup, descriptor validation,
   resource creation, and formatted logging out of per-frame, per-event,
   per-draw, and fixed-step processor loops unless measured and bounded.

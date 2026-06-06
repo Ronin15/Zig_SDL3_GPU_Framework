@@ -77,13 +77,19 @@ Gameplay systems are processors over `DataSystem`, not owners of persistent
 gameplay data. Movement, AI, collision, pathfinding, and render preparation
 should borrow `DataSystem` slices and any required runtime services, run in a
 deterministic order, and complete before later systems consume their output.
+When threaded processors produce events, intents, contacts, or deferred
+structural commands, use typed range-owned output buffers. Prefer count per
+range, prefix offsets, contiguous writes, deterministic range-index merge, and
+batch commit boundaries over global per-command atomics, broad event buses, or
+callback chains.
 
 Hot processors should iterate dense SoA columns directly. Component masks are
 for membership/query decisions; they should not turn hot loops into dynamic
 component joins, string lookup, or hash-map dispatch. Threaded/SIMD processors
 must keep structural entity changes, state transitions, SDL/GPU calls, asset
 loading, save/load streaming, and renderer resource ownership behind an explicit
-deferred or main-thread boundary.
+deferred or main-thread boundary. Use serial fallbacks for small counts, tests,
+unsupported thread targets, and deterministic comparisons.
 
 For threaded/SIMD ECS work, treat cache-line behavior as part of the contract.
 Document hot SoA column alignment before relying on wider or target-specific

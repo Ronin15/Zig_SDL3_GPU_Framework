@@ -662,9 +662,9 @@ processing are covered by Slices 12-14.
 
 ## Slice 12: Simulation Contracts And Deferred Structural Changes
 
-Goal: define deterministic simulation phase contracts before broad gameplay
-systems start creating entities, emitting events, or requesting structural
-changes from worker jobs.
+Goal: define deterministic, efficient simulation phase contracts before broad
+gameplay systems start creating entities, emitting events, or requesting
+structural changes from worker jobs.
 
 Current foundation:
 
@@ -683,17 +683,34 @@ Architecture notes:
 - Structural entity/component changes, state transitions, SDL/GPU calls, asset
   loading, save/load streaming, and renderer ownership must remain behind an
   explicit main-thread or deferred boundary.
-- Transient simulation events and intents should be typed, bounded, ordered
-  data, not callback chains or hot-path hash-map dispatch.
-- Designs should make fixed-step processor order, conflict resolution, and
-  merge points explicit before adding systems that can interact emergently.
+- Determinism, performance, and efficiency are one contract: output order must
+  come from stable input/range order, not worker timing or worker IDs; high-volume
+  outputs must use typed range-owned buffers instead of global per-command append,
+  callback chains, or hot-path hash maps; warmed paths must avoid allocation.
+- `ParallelRange` needs a stable range index before threaded processors produce
+  ordered events, intents, contacts, or deferred structural commands.
+- Threaded output collection should use a count/prefix/write pipeline:
+  count outputs per range, prefix offsets on the main thread, write contiguous
+  output by range, merge by range index, then consume the typed batch.
+- Structural mutation remains behind `DataSystem` batch commit boundaries.
+  Event and intent streams use the same typed range-output model, but remain
+  transient simulation data rather than persistent `DataSystem` state.
+- Designs should make fixed-step processor order, input order, output owner,
+  merge order, allocation policy, conflict resolution, and structural apply
+  points explicit before adding systems that can interact emergently.
 
 Checklist:
 
 - [ ] Define the fixed-step simulation phase order for gameplay processors,
       transient events, deferred structural commands, and save/load hooks.
-- [ ] Add a state-owned event/intent/deferred-command path with deterministic
-      append and merge behavior.
+- [ ] Add stable `ParallelRange.index` support so output order can be tied to
+      deterministic range order rather than worker scheduling.
+- [ ] Add a state-owned simulation frame with typed event, intent, and deferred
+      structural command streams.
+- [ ] Add range-owned output collection for high-volume streams using
+      count/prefix/write and deterministic range-index merge.
+- [ ] Add `DataSystem` batch commit boundaries for deferred structural changes;
+      do not expose per-command structural mutation as the simulation output API.
 - [ ] Add tests that worker-produced outputs merge in stable order and cannot
       mutate `DataSystem` structure from worker ranges.
 - [ ] Document what belongs in persistent `DataSystem` state versus transient
@@ -704,7 +721,10 @@ Acceptance checks:
 - [ ] Deferred entity/component changes apply only after the producing processor
       completes.
 - [ ] Replaying the same initial data and inputs produces the same event,
-      command, and processor output order.
+      command, and processor output order, independent of worker timing.
+- [ ] High-volume output paths use preallocated typed arrays, slices, range-owned
+      buffers, and deterministic batch commit instead of global per-command
+      atomics, broad event buses, or hot-path hash-map dispatch.
 - [ ] Save/load boundaries exclude transient frame events, scratch buffers,
       renderer resources, app services, and thread-system state.
 

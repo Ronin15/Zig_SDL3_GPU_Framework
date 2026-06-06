@@ -172,6 +172,16 @@ rows rather than persistent world entities. Particle emission and expired row
 swap-removal run on the state/main thread; threaded jobs only update assigned
 SoA ranges and render submits rectangles through `Renderer`.
 
+Future simulation outputs must coordinate determinism, performance, and
+efficiency as one contract. Threaded processors that produce events, intents,
+contacts, or deferred structural commands should use typed range-owned output
+buffers: count outputs per stable range, prefix offsets on the main thread,
+write contiguous output slices, merge by range index, and consume the result as
+a batch. Output order must come from stable input/range order, not worker timing
+or worker IDs. Structural mutation remains behind `DataSystem` batch commit
+boundaries; event and intent streams are transient simulation data, not
+persistent `DataSystem` state.
+
 ## SIMD Helpers
 
 `src/core/simd.zig` provides project-named four-lane vector aliases and helper

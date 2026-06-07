@@ -101,26 +101,27 @@ zig build verify
 ## Benchmarks
 
 `zig build bench` runs non-interactive CPU benchmarks for movement bodies,
-transient particle rows, dense collision bodies, and sparse collision bodies.
-The default run automatically
-exercises serial, inline, fixed-worker, adaptive thread-count,
-thread-adaptive-tuned-range, thread-small-range, and thread-large-range cases.
-Movement and collision run count sweeps so threshold changes can be compared
-across workload sizes; particles use one representative count per profile.
-Collision output includes candidate-pair and contact counts so dense stress
-cases can be compared against sparse gameplay-shaped distributions. Output is
-grouped by workload and count, then explains what to tune: per-system parallel
-thresholds, adaptive thread count, and items per claimed range. The
-adaptive+tuned-range case keeps adaptive thread-count selection enabled, layers
-an external items-per-range tuner on top, settles on the best measured
-items-per-range value before timing when possible, and reports phase, initial,
-final, best, and candidate items-per-range values. In adaptive cases, low-count
-processors may stay inline until measured completion time shows that active
-worker threads are worth the synchronization cost; forced-inline batches are
-timing samples for that batch only and do not reset adaptive thread-count state
-for later processors. Use `--details` only when you need the supporting
-per-case timings. Use other
-optional arguments only to narrow or scale the run:
+transient particle rows, dense collision bodies, sparse collision bodies, and
+collision-response contacts. The default run exercises serial, inline,
+fixed-worker, adaptive thread-count, thread-adaptive-tuned-range,
+thread-small-range, and thread-large-range cases so the full processor flow can
+be checked for regressions. Movement, collision, and collision response run
+count sweeps; particles use one representative count per profile. Collision
+output includes candidate-pair and contact counts so dense stress cases can be
+compared against sparse gameplay-shaped distributions.
+
+Benchmark output is grouped by workload and count. Each block prints an aligned
+plain-text table with per-case timing, speedup, throughput, worker-thread use,
+and status, then ends with a concise validation summary. The summary reports
+what the run proved, such as which path won, whether adaptive stayed inline or
+used worker threads, whether tuned range settled, and whether the expected flows
+were measured or skipped. It is not an entity-count or batching recommendation.
+Use `--details` when you need scheduler ranges, wait time, items-per-range,
+tuning phase, and workload counters. In adaptive cases, low-count processors may
+stay inline until measured completion time shows that active worker threads are
+worth the synchronization cost; forced-inline batches are timing samples for
+that batch only and do not reset adaptive thread-count state for later
+processors. Use other optional arguments only to narrow or scale the run:
 
 ```sh
 zig build bench -- --profile quick

@@ -28,6 +28,11 @@ pub const SimulationEvent = union(enum) {
     marker: u32,
 };
 
+pub const CollisionTriggerEvent = struct {
+    a: EntityId,
+    b: EntityId,
+};
+
 pub const MovementIntent = struct {
     entity: EntityId,
     direction_x: f32,
@@ -40,6 +45,8 @@ pub const SimulationIntent = union(enum) {
 };
 
 pub const CollisionContact = struct {
+    /// Dense movement indices are same-step hints emitted after CollisionSystem
+    /// jobs finish. Consumers must use them before structural commits or remap.
     a: EntityId,
     b: EntityId,
     a_movement_index: usize,
@@ -55,6 +62,7 @@ pub const SimulationFrame = struct {
     events: RangeOutputStream(SimulationEvent),
     intents: RangeOutputStream(SimulationIntent),
     contacts: RangeOutputStream(CollisionContact),
+    collision_triggers: RangeOutputStream(CollisionTriggerEvent),
     structural_commands: RangeOutputStream(data_mod.StructuralCommand),
 
     pub fn init(allocator: std.mem.Allocator) SimulationFrame {
@@ -63,12 +71,14 @@ pub const SimulationFrame = struct {
             .events = RangeOutputStream(SimulationEvent).init(allocator),
             .intents = RangeOutputStream(SimulationIntent).init(allocator),
             .contacts = RangeOutputStream(CollisionContact).init(allocator),
+            .collision_triggers = RangeOutputStream(CollisionTriggerEvent).init(allocator),
             .structural_commands = RangeOutputStream(data_mod.StructuralCommand).init(allocator),
         };
     }
 
     pub fn deinit(self: *SimulationFrame) void {
         self.structural_commands.deinit();
+        self.collision_triggers.deinit();
         self.contacts.deinit();
         self.intents.deinit();
         self.events.deinit();
@@ -84,6 +94,7 @@ pub const SimulationFrame = struct {
         self.events.clearRetainingCapacity();
         self.intents.clearRetainingCapacity();
         self.contacts.clearRetainingCapacity();
+        self.collision_triggers.clearRetainingCapacity();
         self.structural_commands.clearRetainingCapacity();
     }
 
@@ -93,11 +104,13 @@ pub const SimulationFrame = struct {
         event_capacity: usize,
         intent_capacity: usize,
         contact_capacity: usize,
+        collision_trigger_capacity: usize,
         structural_command_capacity: usize,
     ) !void {
         try self.events.reserve(range_count, event_capacity);
         try self.intents.reserve(range_count, intent_capacity);
         try self.contacts.reserve(range_count, contact_capacity);
+        try self.collision_triggers.reserve(range_count, collision_trigger_capacity);
         try self.structural_commands.reserve(range_count, structural_command_capacity);
     }
 
@@ -396,22 +409,25 @@ test "simulation frame reserves stream capacity for warmed fixed-step output" {
     var frame = SimulationFrame.init(std.testing.allocator);
     defer frame.deinit();
 
-    try frame.reserveStreams(2, 2, 2, 2, 1);
+    try frame.reserveStreams(2, 2, 2, 2, 2, 1);
 
     const original_allocator = frame.allocator;
     const original_events_allocator = frame.events.allocator;
     const original_intents_allocator = frame.intents.allocator;
+    const original_triggers_allocator = frame.collision_triggers.allocator;
     const original_commands_allocator = frame.structural_commands.allocator;
     var failing_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
     const fail = failing_allocator.allocator();
     frame.allocator = fail;
     frame.events.allocator = fail;
     frame.intents.allocator = fail;
+    frame.collision_triggers.allocator = fail;
     frame.structural_commands.allocator = fail;
     defer {
         frame.allocator = original_allocator;
         frame.events.allocator = original_events_allocator;
         frame.intents.allocator = original_intents_allocator;
+        frame.collision_triggers.allocator = original_triggers_allocator;
         frame.structural_commands.allocator = original_commands_allocator;
     }
 
@@ -467,6 +483,16 @@ test "simulation frame reserves stream capacity for warmed fixed-step output" {
     contact_writer.finish();
     frame.contacts.finishWrite();
 
+    try frame.collision_triggers.prepareRangeCounts(2);
+    frame.collision_triggers.addCount(0, 1);
+    try frame.collision_triggers.prefix();
+    var trigger_writer = frame.collision_triggers.rangeWriter(0);
+    trigger_writer.write(.{ .a = EntityId.invalid, .b = EntityId.invalid });
+    trigger_writer.finish();
+    trigger_writer = frame.collision_triggers.rangeWriter(1);
+    trigger_writer.finish();
+    frame.collision_triggers.finishWrite();
+
     try frame.structural_commands.prepareRangeCounts(2);
     frame.structural_commands.addCount(0, 1);
     try frame.structural_commands.prefix();
@@ -480,5 +506,6 @@ test "simulation frame reserves stream capacity for warmed fixed-step output" {
     try std.testing.expectEqual(@as(usize, 2), frame.events.mergedItems().len);
     try std.testing.expectEqual(@as(usize, 2), frame.intents.mergedItems().len);
     try std.testing.expectEqual(@as(usize, 2), frame.contacts.mergedItems().len);
+    try std.testing.expectEqual(@as(usize, 1), frame.collision_triggers.mergedItems().len);
     try std.testing.expectEqual(@as(usize, 1), frame.structural_commands.mergedItems().len);
 }

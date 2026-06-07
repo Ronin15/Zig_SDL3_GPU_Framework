@@ -446,13 +446,13 @@ fn printGroupReport(group: BenchmarkGroup, results: []const CaseResult, options:
     const baseline = findResult(results, "serial-direct") orelse {
         std.debug.print("\n{s}\n", .{group.name});
         std.debug.print("  no serial baseline was run\n", .{});
-        if (options.details) printCaseDetails(results, null);
+        if (options.details) printCaseDetails(group.name, results, null);
         return;
     };
     if (baseline.stats.status == .skipped) {
         std.debug.print("\n{s}\n", .{group.name});
         std.debug.print("  serial baseline skipped: {s}\n", .{baseline.stats.skip_reason});
-        if (options.details) printCaseDetails(results, null);
+        if (options.details) printCaseDetails(group.name, results, null);
         return;
     }
 
@@ -468,9 +468,9 @@ fn printGroupReport(group: BenchmarkGroup, results: []const CaseResult, options:
 
     printVerdict(group, item_count, baseline, best, fixed_auto, limited_best);
     printTuning(baseline, best, fixed_auto, adaptive, tuned_range, limited_best, best_range_case);
-    printEvidence(baseline, best, inline_case, fixed_auto, adaptive, tuned_range, limited_best, best_range_case);
+    printEvidence(group.name, baseline, best, inline_case, fixed_auto, adaptive, tuned_range, limited_best, best_range_case);
     if (options.details) {
-        printCaseDetails(results, baseline);
+        printCaseDetails(group.name, results, baseline);
     } else {
         std.debug.print("  details: pass --details to show the full case breakdown\n", .{});
     }
@@ -631,6 +631,7 @@ fn printTuning(
 }
 
 fn printEvidence(
+    group_name: []const u8,
     baseline: CaseResult,
     best: CaseResult,
     inline_case: ?CaseResult,
@@ -700,15 +701,27 @@ fn printEvidence(
         }
     }
     if (best.stats.candidate_pairs != 0 or best.stats.output_count != 0) {
-        std.debug.print(
-            "    - workload: candidates={} outputs={} outputs/body={d}.{d:0>2}.\n",
-            .{
-                best.stats.candidate_pairs,
-                best.stats.output_count,
-                outputsPerItemBasisPoints(best.stats) / 100,
-                outputsPerItemBasisPoints(best.stats) % 100,
-            },
-        );
+        if (std.mem.startsWith(u8, group_name, "collision-response")) {
+            std.debug.print(
+                "    - workload: triggers={} intents={} intents/contact={d}.{d:0>2}.\n",
+                .{
+                    best.stats.candidate_pairs,
+                    best.stats.output_count,
+                    outputsPerItemBasisPoints(best.stats) / 100,
+                    outputsPerItemBasisPoints(best.stats) % 100,
+                },
+            );
+        } else {
+            std.debug.print(
+                "    - workload: candidates={} outputs={} outputs/body={d}.{d:0>2}.\n",
+                .{
+                    best.stats.candidate_pairs,
+                    best.stats.output_count,
+                    outputsPerItemBasisPoints(best.stats) / 100,
+                    outputsPerItemBasisPoints(best.stats) % 100,
+                },
+            );
+        }
     }
 }
 
@@ -717,10 +730,11 @@ fn itemLabel(group_name: []const u8) []const u8 {
     if (std.mem.eql(u8, group_name, "particles")) return "particle rows";
     if (std.mem.eql(u8, group_name, "collision")) return "collision bodies";
     if (std.mem.eql(u8, group_name, "collision-sparse")) return "collision bodies";
+    if (std.mem.startsWith(u8, group_name, "collision-response")) return "contacts";
     return "items";
 }
 
-fn printCaseDetails(results: []const CaseResult, baseline: ?CaseResult) void {
+fn printCaseDetails(group_name: []const u8, results: []const CaseResult, baseline: ?CaseResult) void {
     std.debug.print("  case details:\n", .{});
     for (results) |result| {
         if (result.stats.status == .skipped) {
@@ -753,10 +767,17 @@ fn printCaseDetails(results: []const CaseResult, baseline: ?CaseResult) void {
             );
         }
         if (result.stats.candidate_pairs != 0 or result.stats.output_count != 0) {
-            std.debug.print(
-                ", candidates {} outputs {}",
-                .{ result.stats.candidate_pairs, result.stats.output_count },
-            );
+            if (std.mem.startsWith(u8, group_name, "collision-response")) {
+                std.debug.print(
+                    ", triggers {} intents {}",
+                    .{ result.stats.candidate_pairs, result.stats.output_count },
+                );
+            } else {
+                std.debug.print(
+                    ", candidates {} outputs {}",
+                    .{ result.stats.candidate_pairs, result.stats.output_count },
+                );
+            }
         }
         std.debug.print("\n", .{});
     }

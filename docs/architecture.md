@@ -183,8 +183,11 @@ boundaries and only write their assigned movement rows.
 both movement bodies and collision bounds. It owns warmed, 64-byte-aligned AABB
 proxy scratch, preserves a sorted sweep-and-prune order across fixed steps, and
 uses range-window broadphase passes with count/prefix/write contact output.
-Contacts are transient `SimulationFrame` data; gameplay response remains a
-separate state or processor policy.
+Contacts are transient `SimulationFrame` data; `CollisionResponseSystem`
+consumes the completed same-step contact stream through explicit response-policy
+components, computes aligned correction columns with `src/core/simd.zig`, and
+applies sparse movement writes deterministically on the main thread before
+structural commands commit.
 
 The demo player is intentionally a special-case facade for player input and
 facing rules, backed by `DataSystem` data. Enemies and other world objects

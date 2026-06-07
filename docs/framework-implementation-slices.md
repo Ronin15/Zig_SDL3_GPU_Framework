@@ -766,8 +766,9 @@ Architecture notes:
   and collision bounds.
 - Contact output uses the Slice 12 count/prefix/write stream pattern so threaded
   range windows merge deterministically.
-- Collision response stays separate from detection; `GameDemoState` consumes
-  contacts for narrow demo policies.
+- Collision response stays separate from detection; `CollisionResponseSystem`
+  consumes the completed same-step contact stream through explicit
+  response-policy components before structural commands commit.
 
 Checklist:
 
@@ -793,17 +794,15 @@ Acceptance checks:
 Slice 13 landed as a high-throughput collision-contact foundation. The collision
 processor builds 64-byte-aligned AABB proxies from movement and collision bounds,
 maintains warm sorted order, partitions sweep-and-prune work into deterministic
-range windows, and emits transient contacts through `SimulationFrame`. The demo
-uses those contacts for a small player-blocking and square-bounce response while
-keeping collision detection generic. Benchmarks now report candidate pairs and
-contacts so dense stress cases can be compared against sparse gameplay-shaped
-fixtures.
-
-Follow-up: the detector already emits generic entity-to-entity contacts,
-including player contacts, but the demo response policy currently handles only
-player-vs-obstacle blocking and moving-square-vs-obstacle bouncing. Player-vs
-moving-entity response should be added as a separate gameplay policy slice or
-demo-response follow-up rather than baked into collision detection.
+range windows, and emits transient contacts through `SimulationFrame`. The
+response processor consumes the completed same-step contact stream through
+`collision_response` components, keeps trigger output in a typed transient
+stream, computes correction columns with `src/core/simd.zig`, and applies sparse
+movement writes in deterministic contact order before structural commands
+commit. The demo uses the same generic response path for player-obstacle,
+moving-square-obstacle, and player-moving-square contacts. Benchmarks now report
+candidate pairs and contacts so dense stress cases can be compared against
+sparse gameplay-shaped fixtures.
 
 ## Slice 14: AI, Pathfinding, And Emergent Rule Processing
 

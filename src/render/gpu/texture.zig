@@ -89,10 +89,10 @@ pub fn uploadFromPixels(
     c.SDL_UploadToGPUTexture(copy_pass, &source, &destination, false);
     c.SDL_EndGPUCopyPass(copy_pass);
 
-    command_buffer_finished = true;
     if (!c.SDL_SubmitGPUCommandBuffer(command_buffer)) {
         return sdlError("SDL_SubmitGPUCommandBuffer");
     }
+    command_buffer_finished = true;
 
     return .{
         .texture = texture,

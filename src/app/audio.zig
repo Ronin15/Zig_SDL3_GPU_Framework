@@ -243,7 +243,10 @@ pub const AudioService = struct {
         errdefer if (!context_initialized) allocator.destroy(production_context);
         production_context.* = try ProductionBackendContext.init(config.master_gain);
         context_initialized = true;
-        errdefer production_context.deinit();
+        errdefer {
+            production_context.deinit();
+            allocator.destroy(production_context);
+        }
 
         service.backend = productionBackend();
         service.backend_context = @ptrCast(production_context);
@@ -331,14 +334,24 @@ pub const AudioService = struct {
     fn createTracks(self: *AudioService) !void {
         self.music_track = try self.backend.create_track(self.backend_context);
         errdefer {
-            self.backend.destroy_track(self.backend_context, self.music_track);
-            self.music_track = invalid_backend_handle;
+            self.destroyCreatedTracks();
         }
         try self.sfx_tracks.ensureTotalCapacity(self.allocator, self.config.max_sfx_tracks);
         for (0..self.config.max_sfx_tracks) |_| {
             const handle = try self.backend.create_track(self.backend_context);
-            errdefer self.backend.destroy_track(self.backend_context, handle);
             self.sfx_tracks.appendAssumeCapacity(.{ .handle = handle });
+        }
+    }
+
+    fn destroyCreatedTracks(self: *AudioService) void {
+        for (self.sfx_tracks.items) |track| {
+            self.backend.destroy_track(self.backend_context, track.handle);
+        }
+        self.sfx_tracks.deinit(self.allocator);
+        self.sfx_tracks = .empty;
+        if (self.music_track != invalid_backend_handle) {
+            self.backend.destroy_track(self.backend_context, self.music_track);
+            self.music_track = invalid_backend_handle;
         }
     }
 
@@ -832,10 +845,13 @@ const FakeBackendContext = struct {
     mixer_gain: f32 = 1.0,
     load_failures: std.StringHashMapUnmanaged(void) = .empty,
     load_calls: u32 = 0,
+    create_track_calls: u32 = 0,
+    destroy_track_calls: u32 = 0,
     play_calls: u32 = 0,
     gain_calls: u32 = 0,
     frequency_ratio_calls: u32 = 0,
     position_calls: u32 = 0,
+    fail_create_after: ?u32 = null,
 
     fn init(allocator: std.mem.Allocator) FakeBackendContext {
         return .{ .allocator = allocator };
@@ -904,6 +920,10 @@ const FakeAudio = struct {
 
 fn fakeCreateTrack(context: *anyopaque) !BackendHandle {
     const fake: *FakeBackendContext = @ptrCast(@alignCast(context));
+    if (fake.fail_create_after) |limit| {
+        if (fake.create_track_calls >= limit) return error.AudioBackendFailure;
+    }
+    fake.create_track_calls += 1;
     const handle = fake.next();
     try fake.tracks.put(fake.allocator, handle, .{});
     return handle;
@@ -911,6 +931,7 @@ fn fakeCreateTrack(context: *anyopaque) !BackendHandle {
 
 fn fakeDestroyTrack(context: *anyopaque, handle: BackendHandle) void {
     const fake: *FakeBackendContext = @ptrCast(@alignCast(context));
+    fake.destroy_track_calls += 1;
     _ = fake.tracks.remove(handle);
 }
 
@@ -1023,6 +1044,38 @@ test "audio command buffer enforces per-step command cap" {
     try std.testing.expectEqual(@as(usize, 1), commands.len());
     commands.beginStep();
     try std.testing.expectEqual(@as(usize, 0), commands.len());
+}
+
+test "audio service init cleans up music track when first sfx track creation fails" {
+    var fake = FakeBackendContext.init(std.testing.allocator);
+    defer fake.deinit();
+    fake.fail_create_after = 1;
+    const assetStore = assets.AssetStore.init(std.testing.allocator, std.testing.io, "assets");
+
+    try std.testing.expectError(
+        error.AudioBackendFailure,
+        AudioService.initWithBackend(std.testing.allocator, assetStore, .{ .max_sfx_tracks = 2 }, FakeBackendContext.backend(), @ptrCast(&fake)),
+    );
+
+    try std.testing.expectEqual(@as(u32, 1), fake.create_track_calls);
+    try std.testing.expectEqual(@as(u32, 1), fake.destroy_track_calls);
+    try std.testing.expectEqual(@as(usize, 0), fake.tracks.count());
+}
+
+test "audio service init cleans up partially created sfx tracks" {
+    var fake = FakeBackendContext.init(std.testing.allocator);
+    defer fake.deinit();
+    fake.fail_create_after = 3;
+    const assetStore = assets.AssetStore.init(std.testing.allocator, std.testing.io, "assets");
+
+    try std.testing.expectError(
+        error.AudioBackendFailure,
+        AudioService.initWithBackend(std.testing.allocator, assetStore, .{ .max_sfx_tracks = 4 }, FakeBackendContext.backend(), @ptrCast(&fake)),
+    );
+
+    try std.testing.expectEqual(@as(u32, 3), fake.create_track_calls);
+    try std.testing.expectEqual(@as(u32, 3), fake.destroy_track_calls);
+    try std.testing.expectEqual(@as(usize, 0), fake.tracks.count());
 }
 
 test "audio service caches loads and memoizes failed paths" {

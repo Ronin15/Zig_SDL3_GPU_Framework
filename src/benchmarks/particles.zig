@@ -67,6 +67,9 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
 
     var particles = try createFixture(allocator, item_count);
     defer particles.deinit();
+    if (suite.adaptiveTunerForCase(case, particle_range_alignment_items)) |tuner| {
+        particles.adaptive_tuner = tuner;
+    }
 
     var threads: ?ThreadSystem = null;
     if (case.usesThreadSystem()) {
@@ -88,6 +91,7 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
             _ = runOnce(&particles, if (threads) |*thread_system| thread_system else null, case);
         }
     }
+    const settled_before_measurement = if (case.adaptive) particles.adaptive_tuner.isSettled() else false;
 
     var accumulator = suite.StatsAccumulator.init(item_count);
     for (0..options.iterations) |_| {
@@ -99,7 +103,7 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
 
     var stats = accumulator.finish();
     if (case.adaptive) {
-        stats.work_tuning = suite.workTuningSummary(particles.adaptive_tuner.report());
+        stats.work_tuning = suite.workTuningSummary(particles.adaptive_tuner.report(), settled_before_measurement);
     }
     return stats;
 }
@@ -148,6 +152,7 @@ test "particle benchmark fixed cases use explicit range controls" {
     try std.testing.expectEqual(suite.default_cases[4].itemsPerRange(particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[4]).?);
     try std.testing.expectEqual(suite.default_cases[5].itemsPerRange(particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[5]).?);
     try std.testing.expectEqual(@as(?usize, null), benchmarkItemsPerRange(suite.default_cases[6]));
+    try std.testing.expectEqual(@as(?usize, null), benchmarkItemsPerRange(suite.default_cases[7]));
 }
 
 test "particle benchmark fixture keeps long-lived particles active after update" {

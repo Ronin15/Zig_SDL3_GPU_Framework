@@ -88,6 +88,9 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     defer data.deinit();
     var system = CollisionSystem.init(allocator);
     defer system.deinit();
+    if (suite.adaptiveTunerForCase(case, collision_range_alignment_items)) |tuner| {
+        system.adaptive_tuner = tuner;
+    }
     var contacts = RangeOutputStream(CollisionContact).init(allocator);
     defer contacts.deinit();
 
@@ -111,6 +114,7 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
             _ = try runOnce(&system, &data, &contacts, if (threads) |*thread_system| thread_system else null, case);
         }
     }
+    const settled_before_measurement = if (case.adaptive) system.adaptive_tuner.isSettled() else false;
 
     var accumulator = suite.StatsAccumulator.init(item_count);
     var last_collision_stats = CollisionStats{};
@@ -125,7 +129,7 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     stats.candidate_pairs = last_collision_stats.candidate_pair_count;
     stats.output_count = last_collision_stats.contact_count;
     if (case.adaptive) {
-        stats.work_tuning = suite.workTuningSummary(system.adaptive_tuner.report());
+        stats.work_tuning = suite.workTuningSummary(system.adaptive_tuner.report(), settled_before_measurement);
     }
     return stats;
 }

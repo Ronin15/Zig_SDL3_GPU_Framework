@@ -1,5 +1,5 @@
 benchmark_outputs/
-.DS_store
+.DS_Store
 .zig-cache/
 .zig-global-cache/
 zig-pkg/

@@ -34,6 +34,7 @@ const test_square_count = 4;
 const obstacle_count = 2;
 const collision_sfx_cooldown_capacity = 32;
 const collision_sfx_cooldown_seconds: f32 = 0.14;
+const demo_contact_capacity = 32;
 const demo_music_path = "audio/music/demo_loop.wav";
 const collision_sfx_path = "audio/sfx/collision.wav";
 const jet_sfx_path = "audio/sfx/player_jet.wav";
@@ -67,7 +68,10 @@ pub const GameDemoState = struct {
         errdefer particles.deinit();
         var simulation_frame = SimulationFrame.init(allocator);
         errdefer simulation_frame.deinit();
-        try simulation_frame.reserveStreams(8, 16, 16, 32, 16, 8);
+        try simulation_frame.reserveStreams(8, 16, 16, demo_contact_capacity, 16, 8);
+        var collision_response = CollisionResponseSystem.init(allocator);
+        errdefer collision_response.deinit();
+        try collision_response.reserveForContacts(demo_contact_capacity);
 
         return .{
             .data = data,
@@ -75,7 +79,7 @@ pub const GameDemoState = struct {
             .player = player,
             .movement = MovementSystem.init(),
             .collision = CollisionSystem.init(allocator),
-            .collision_response = CollisionResponseSystem.init(allocator),
+            .collision_response = collision_response,
             .particles = particles,
             .test_squares = test_squares,
             .obstacles = obstacles,

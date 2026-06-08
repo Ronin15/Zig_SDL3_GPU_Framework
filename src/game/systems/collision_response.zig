@@ -4,9 +4,9 @@
 
 const std = @import("std");
 const CollisionResponse = @import("../data_system.zig").CollisionResponse;
-const ConstMovementBodySlice = @import("../data_system.zig").ConstMovementBodySlice;
 const DataSystem = @import("../data_system.zig").DataSystem;
 const EntityId = @import("../data_system.zig").EntityId;
+const MovementBodySlice = @import("../data_system.zig").MovementBodySlice;
 const hot_soa_column_alignment = @import("../data_system.zig").hot_soa_column_alignment;
 const CollisionContact = @import("../simulation.zig").CollisionContact;
 const CollisionTriggerEvent = @import("../simulation.zig").CollisionTriggerEvent;
@@ -56,7 +56,7 @@ pub const CollisionResponseSystem = struct {
 
     /// Consumes the completed same-step sorted contact stream after
     /// CollisionSystem count/prefix/write has finished. Dense movement indices
-    /// are trusted in ReleaseFast and asserted in Debug before structural commits.
+    /// are fast-path hints; release builds revalidate before writing.
     pub fn update(self: *CollisionResponseSystem, data: *DataSystem, frame: *SimulationFrame) !CollisionResponseStats {
         const contacts = frame.contacts.mergedItems();
         self.clearIntentsRetainingCapacity();
@@ -73,6 +73,11 @@ pub const CollisionResponseSystem = struct {
         };
     }
 
+    pub fn reserveForContacts(self: *CollisionResponseSystem, max_contacts: usize) !void {
+        try self.ensureIntentCapacity(max_contacts * 2);
+        try self.ensureTriggerCapacity(max_contacts);
+    }
+
     fn gatherIntentsAndEvents(
         self: *CollisionResponseSystem,
         data: *const DataSystem,
@@ -80,7 +85,6 @@ pub const CollisionResponseSystem = struct {
         contacts: []const CollisionContact,
     ) !usize {
         var trigger_count: usize = 0;
-        const movement = data.movementBodySliceConst();
         for (contacts) |contact| {
             const a_response = data.collisionResponseConst(contact.a) orelse continue;
             const b_response = data.collisionResponseConst(contact.b) orelse continue;
@@ -89,7 +93,7 @@ pub const CollisionResponseSystem = struct {
                 trigger_count += 1;
                 continue;
             }
-            self.gatherPhysicalIntents(contact, a_response, b_response, movement);
+            self.gatherPhysicalIntents(contact, a_response, b_response);
         }
 
         if (trigger_count > 0) {
@@ -112,37 +116,30 @@ pub const CollisionResponseSystem = struct {
         contact: CollisionContact,
         a_response: CollisionResponse,
         b_response: CollisionResponse,
-        movement: ConstMovementBodySlice,
     ) void {
         const a_dynamic = a_response.mobility == .dynamic;
         const b_dynamic = b_response.mobility == .dynamic;
         if (!a_dynamic and !b_dynamic) return;
 
         if (a_dynamic and !b_dynamic) {
-            debugAssertMovementIndex(movement, contact.a, contact.a_movement_index);
             self.appendIntentAssumeCapacity(contact.a, contact.a_movement_index, contact.normal_x, contact.normal_y, contact.penetration, a_response);
             return;
         }
         if (!a_dynamic and b_dynamic) {
-            debugAssertMovementIndex(movement, contact.b, contact.b_movement_index);
             self.appendIntentAssumeCapacity(contact.b, contact.b_movement_index, -contact.normal_x, -contact.normal_y, contact.penetration, b_response);
             return;
         }
 
         if (a_response.mode == .bounce and b_response.mode != .bounce) {
-            debugAssertMovementIndex(movement, contact.a, contact.a_movement_index);
             self.appendIntentAssumeCapacity(contact.a, contact.a_movement_index, contact.normal_x, contact.normal_y, contact.penetration, a_response);
             return;
         }
         if (b_response.mode == .bounce and a_response.mode != .bounce) {
-            debugAssertMovementIndex(movement, contact.b, contact.b_movement_index);
             self.appendIntentAssumeCapacity(contact.b, contact.b_movement_index, -contact.normal_x, -contact.normal_y, contact.penetration, b_response);
             return;
         }
 
         const split_penetration = contact.penetration * 0.5;
-        debugAssertMovementIndex(movement, contact.a, contact.a_movement_index);
-        debugAssertMovementIndex(movement, contact.b, contact.b_movement_index);
         self.appendIntentAssumeCapacity(contact.a, contact.a_movement_index, contact.normal_x, contact.normal_y, split_penetration, a_response);
         self.appendIntentAssumeCapacity(contact.b, contact.b_movement_index, -contact.normal_x, -contact.normal_y, split_penetration, b_response);
     }
@@ -192,17 +189,16 @@ pub const CollisionResponseSystem = struct {
     fn applyIntents(self: *CollisionResponseSystem, data: *DataSystem) void {
         var movement = data.movementBodySlice();
         for (0..self.intent_entities.items.len) |index| {
-            const movement_index = self.movement_indices.items[index];
-            if (movement_index >= movement.entities.len) continue;
+            const movement_index = movementIndexForIntent(data, movement, self.intent_entities.items[index], self.movement_indices.items[index]) orelse continue;
             movement.position_x[movement_index] += self.correction_x.items[index];
             movement.position_y[movement_index] += self.correction_y.items[index];
-            if (self.normal_x.items[index] != 0) {
+            if (shouldApplyNormalVelocityResponse(movement.velocity_x[movement_index], self.normal_x.items[index])) {
                 switch (self.kinds.items[index]) {
                     .solid => movement.velocity_x[movement_index] = 0,
                     .bounce => movement.velocity_x[movement_index] *= self.velocity_scale.items[index],
                 }
             }
-            if (self.normal_y.items[index] != 0) {
+            if (shouldApplyNormalVelocityResponse(movement.velocity_y[movement_index], self.normal_y.items[index])) {
                 switch (self.kinds.items[index]) {
                     .solid => movement.velocity_y[movement_index] = 0,
                     .bounce => movement.velocity_y[movement_index] *= self.velocity_scale.items[index],
@@ -248,9 +244,15 @@ const ResponseIntentKind = enum {
     bounce,
 };
 
-fn debugAssertMovementIndex(movement: ConstMovementBodySlice, entity: EntityId, movement_index: usize) void {
-    std.debug.assert(movement_index < movement.entities.len);
-    std.debug.assert(entityIdsEqual(movement.entities[movement_index], entity));
+fn movementIndexForIntent(data: *const DataSystem, movement: MovementBodySlice, entity: EntityId, cached_index: usize) ?usize {
+    if (cached_index < movement.entities.len and entityIdsEqual(movement.entities[cached_index], entity)) {
+        return cached_index;
+    }
+    return data.movementBodyDenseIndex(entity);
+}
+
+fn shouldApplyNormalVelocityResponse(velocity: f32, normal: f32) bool {
+    return normal != 0 and velocity * normal < 0;
 }
 
 fn entityIdsEqual(lhs: EntityId, rhs: EntityId) bool {
@@ -338,6 +340,45 @@ test "bounce dynamic response reflects normal velocity by restitution" {
     try std.testing.expectApproxEqAbs(@as(f32, -10), body.velocity.x, 0.001);
 }
 
+test "bounce response preserves separating normal velocity" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    const dynamic = try addEntity(&data, 10, 20, -20, 0, .{ .mode = .bounce, .mobility = .dynamic, .restitution = 0.5 });
+    const static = try addEntity(&data, 40, 20, 0, 0, .{ .mode = .solid, .mobility = .static, .restitution = 0 });
+    var frame = SimulationFrame.init(std.testing.allocator);
+    defer frame.deinit();
+    const contacts = [_]CollisionContact{makeContact(dynamic, static, data.movementBodyDenseIndex(dynamic).?, data.movementBodyDenseIndex(static).?, -1, 0, 4)};
+    try writeContacts(&frame, &contacts);
+
+    var system = CollisionResponseSystem.init(std.testing.allocator);
+    defer system.deinit();
+    _ = try system.update(&data, &frame);
+
+    const body = data.movementBodyConst(dynamic).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 6), body.position.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, -20), body.velocity.x, 0.001);
+}
+
+test "solid response preserves separating normal velocity" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    const dynamic = try addEntity(&data, 10, 20, -15, 3, .{ .mode = .solid, .mobility = .dynamic, .restitution = 0 });
+    const static = try addEntity(&data, 40, 20, 0, 0, .{ .mode = .solid, .mobility = .static, .restitution = 0 });
+    var frame = SimulationFrame.init(std.testing.allocator);
+    defer frame.deinit();
+    const contacts = [_]CollisionContact{makeContact(dynamic, static, data.movementBodyDenseIndex(dynamic).?, data.movementBodyDenseIndex(static).?, -1, 0, 3)};
+    try writeContacts(&frame, &contacts);
+
+    var system = CollisionResponseSystem.init(std.testing.allocator);
+    defer system.deinit();
+    _ = try system.update(&data, &frame);
+
+    const body = data.movementBodyConst(dynamic).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 7), body.position.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, -15), body.velocity.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3), body.velocity.y, 0.001);
+}
+
 test "solid versus bounce dynamic pair gives response to bounce entity" {
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
@@ -388,6 +429,61 @@ test "trigger response emits event without physical correction" {
     try std.testing.expect(entityIdsEqual(trigger, frame.collision_triggers.mergedItems()[0].a));
     try std.testing.expect(entityIdsEqual(dynamic, frame.collision_triggers.mergedItems()[0].b));
     try std.testing.expectEqual(@as(f32, 14), data.movementBodyConst(dynamic).?.position.x);
+}
+
+test "response remaps stale cached movement index before writing" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    const target = try addEntity(&data, 10, 20, 10, 0, .{ .mode = .solid, .mobility = .dynamic, .restitution = 0 });
+    const wrong = try addEntity(&data, 50, 20, 0, 0, .{ .mode = .solid, .mobility = .dynamic, .restitution = 0 });
+    const static = try addEntity(&data, 40, 20, 0, 0, .{ .mode = .solid, .mobility = .static, .restitution = 0 });
+    const wrong_before = data.movementBodyConst(wrong).?;
+    var frame = SimulationFrame.init(std.testing.allocator);
+    defer frame.deinit();
+    const contacts = [_]CollisionContact{makeContact(target, static, data.movementBodyDenseIndex(wrong).?, data.movementBodyDenseIndex(static).?, -1, 0, 2)};
+    try writeContacts(&frame, &contacts);
+
+    var system = CollisionResponseSystem.init(std.testing.allocator);
+    defer system.deinit();
+    _ = try system.update(&data, &frame);
+
+    const target_after = data.movementBodyConst(target).?;
+    const wrong_after = data.movementBodyConst(wrong).?;
+    try std.testing.expectApproxEqAbs(@as(f32, 8), target_after.position.x, 0.001);
+    try std.testing.expectApproxEqAbs(wrong_before.position.x, wrong_after.position.x, 0.001);
+    try std.testing.expectApproxEqAbs(wrong_before.velocity.x, wrong_after.velocity.x, 0.001);
+}
+
+test "warmed response update does not allocate" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    const trigger = try addEntity(&data, 10, 20, 0, 0, .{ .mode = .trigger, .mobility = .static, .restitution = 0 });
+    const dynamic = try addEntity(&data, 14, 20, 5, 0, .{ .mode = .solid, .mobility = .dynamic, .restitution = 0 });
+    var frame = SimulationFrame.init(std.testing.allocator);
+    defer frame.deinit();
+    try frame.reserveStreams(1, 0, 0, 1, 1, 0);
+    const contacts = [_]CollisionContact{makeContact(trigger, dynamic, data.movementBodyDenseIndex(trigger).?, data.movementBodyDenseIndex(dynamic).?, -1, 0, 2)};
+    try writeContacts(&frame, &contacts);
+
+    var system = CollisionResponseSystem.init(std.testing.allocator);
+    defer system.deinit();
+    try system.reserveForContacts(1);
+
+    const original_system_allocator = system.allocator;
+    const original_trigger_allocator = frame.collision_triggers.allocator;
+    var failing_allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    const fail = failing_allocator.allocator();
+    system.allocator = fail;
+    frame.collision_triggers.allocator = fail;
+    defer {
+        system.allocator = original_system_allocator;
+        frame.collision_triggers.allocator = original_trigger_allocator;
+    }
+
+    const stats = try system.update(&data, &frame);
+
+    try std.testing.expectEqual(@as(usize, 1), stats.trigger_count);
+    try std.testing.expectEqual(@as(usize, 1), frame.collision_triggers.mergedItems().len);
 }
 
 test "serial response math uses simd chunks and scalar tails" {

@@ -105,10 +105,12 @@ zig build verify
 transient particle rows, dense collision bodies, sparse collision bodies, and
 collision-response contacts. The default run exercises one serial baseline,
 fixed-worker, fixed small-range, fixed large-range, and adaptive cases so the
-full processor flow can be checked for regressions. `thread-adaptive` uses the
-same processor-owned adaptive tuner path as production systems; the fixed cases
-are controls for scheduler overhead, worker-count scaling, and range-size
-effects. The default quick profile keeps collision coverage short: dense and
+full processor flow can be checked for regressions.
+`thread-adaptive-fixed-range` isolates adaptive worker-count selection with a
+fixed range size, while `thread-adaptive-tuned-range` uses the same
+processor-owned adaptive worker and range tuner path as production systems. The
+fixed cases are controls for scheduler overhead, worker-count scaling, and
+range-size effects. The default quick profile keeps collision coverage short: dense and
 sparse collision each run one representative body count, while collision-response
 modes run small and medium contact counts. Standard and stress profiles keep the
 heavier collision sweeps.
@@ -133,9 +135,9 @@ path stayed inline through the ThreadSystem. That can still be slower than
 `serial-direct` is the raw single-thread control path with no ThreadSystem
 submission overhead.
 
-For regression checking, `thread-adaptive` first runs the explicit `--warmup`
-iterations, then runs a bounded adaptive settle phase before the timed
-measurement loop. This keeps the adaptive row focused on the selected
+For regression checking, adaptive benchmark cases first run the explicit
+`--warmup` iterations, then run a bounded adaptive settle phase before the
+timed measurement loop. This keeps the adaptive rows focused on the selected
 steady-state profile instead of averaging the tuner search cost into the mean.
 If the tuner still fails to settle within that budget, the detail table reports
 the probing phase and selected candidate so the run is treated as an adaptive
@@ -150,7 +152,7 @@ Use other optional arguments only to narrow or scale the run:
 ```sh
 zig build bench -- --profile quick
 zig build bench -- --profile standard --iterations 100
-zig build bench -- --case thread-adaptive
+zig build bench -- --case thread-adaptive-tuned-range
 zig build bench -- --group movement --items 65536 --details
 zig build bench -- --details
 ```

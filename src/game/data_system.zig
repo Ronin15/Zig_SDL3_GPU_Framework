@@ -7,7 +7,7 @@
 //! directly with core/simd.zig and split contiguous ranges through ThreadSystem.
 
 const std = @import("std");
-const assets_mod = @import("../assets/assets.zig");
+const assets = @import("../assets/assets.zig");
 const config = @import("../config.zig");
 const math = @import("../core/math.zig");
 const simd = @import("../core/simd.zig");
@@ -46,6 +46,8 @@ pub const Component = enum(u5) {
     facing,
     primitive_visual,
     asset_reference,
+    collision_bounds,
+    collision_response,
 };
 
 pub const ComponentMask = u32;
@@ -55,6 +57,8 @@ pub const component_masks = struct {
     pub const facing = componentMask(.facing);
     pub const primitive_visual = componentMask(.primitive_visual);
     pub const asset_reference = componentMask(.asset_reference);
+    pub const collision_bounds = componentMask(.collision_bounds);
+    pub const collision_response = componentMask(.collision_response);
     pub const render_primitive = movement_body | facing | primitive_visual;
 };
 
@@ -161,6 +165,100 @@ pub const ConstAssetReferenceSlice = struct {
     relative_paths: []const []const u8,
 };
 
+pub const CollisionBounds = struct {
+    offset: math.Vec2 = .{},
+    size: math.Vec2,
+};
+
+pub const CollisionBoundsCommand = struct {
+    entity: EntityId,
+    bounds: CollisionBounds,
+};
+
+pub const ConstCollisionBoundsSlice = struct {
+    entities: []const EntityId,
+    offset_x: ConstHotF32Slice,
+    offset_y: ConstHotF32Slice,
+    size_x: ConstHotF32Slice,
+    size_y: ConstHotF32Slice,
+};
+
+pub const CollisionResponseMode = enum {
+    solid,
+    bounce,
+    trigger,
+};
+
+pub const CollisionResponseMobility = enum {
+    dynamic,
+    static,
+};
+
+pub const CollisionResponse = struct {
+    mode: CollisionResponseMode = .solid,
+    mobility: CollisionResponseMobility = .dynamic,
+    restitution: f32 = 0,
+};
+
+pub const CollisionResponseCommand = struct {
+    entity: EntityId,
+    response: CollisionResponse,
+};
+
+pub const ConstCollisionResponseSlice = struct {
+    entities: []const EntityId,
+    modes: []const CollisionResponseMode,
+    mobilities: []const CollisionResponseMobility,
+    restitution: ConstHotF32Slice,
+};
+
+pub const EntityTemplate = struct {
+    movement_body: ?MovementBody = null,
+    facing: ?FacingData = null,
+    primitive_visual: ?PrimitiveVisual = null,
+    asset_reference: ?AssetReference = null,
+    collision_bounds: ?CollisionBounds = null,
+    collision_response: ?CollisionResponse = null,
+};
+
+pub const MovementBodyCommand = struct {
+    entity: EntityId,
+    body: MovementBody,
+};
+
+pub const FacingCommand = struct {
+    entity: EntityId,
+    facing: FacingData,
+};
+
+pub const PrimitiveVisualCommand = struct {
+    entity: EntityId,
+    visual: PrimitiveVisual,
+};
+
+pub const AssetReferenceCommand = struct {
+    entity: EntityId,
+    asset_reference: AssetReference,
+};
+
+pub const StructuralCommand = union(enum) {
+    create_entity: EntityTemplate,
+    destroy_entity: EntityId,
+    set_movement_body: MovementBodyCommand,
+    set_facing: FacingCommand,
+    set_primitive_visual: PrimitiveVisualCommand,
+    set_asset_reference: AssetReferenceCommand,
+    set_collision_bounds: CollisionBoundsCommand,
+    set_collision_response: CollisionResponseCommand,
+};
+
+pub const StructuralCommitStats = struct {
+    created: usize = 0,
+    destroyed: usize = 0,
+    components_set: usize = 0,
+    stale_skipped: usize = 0,
+};
+
 pub const DataSystem = struct {
     allocator: std.mem.Allocator,
     slots: std.ArrayList(EntitySlot) = .empty,
@@ -169,12 +267,16 @@ pub const DataSystem = struct {
     facings: FacingStore = .{},
     primitive_visuals: PrimitiveVisualStore = .{},
     asset_refs: AssetReferenceStore = .{},
+    collision_bounds: CollisionBoundsStore = .{},
+    collision_responses: CollisionResponseStore = .{},
 
     pub fn init(allocator: std.mem.Allocator) DataSystem {
         return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *DataSystem) void {
+        self.collision_responses.deinit(self.allocator);
+        self.collision_bounds.deinit(self.allocator);
         self.asset_refs.deinit(self.allocator);
         self.primitive_visuals.deinit(self.allocator);
         self.facings.deinit(self.allocator);
@@ -206,6 +308,8 @@ pub const DataSystem = struct {
         if (slot.facing_index) |dense_index| self.removeFacingAt(@intCast(dense_index));
         if (slot.primitive_visual_index) |dense_index| self.removePrimitiveVisualAt(@intCast(dense_index));
         if (slot.asset_ref_index) |dense_index| self.removeAssetReferenceAt(@intCast(dense_index));
+        if (slot.collision_bounds_index) |dense_index| self.removeCollisionBoundsAt(@intCast(dense_index));
+        if (slot.collision_response_index) |dense_index| self.removeCollisionResponseAt(@intCast(dense_index));
 
         const retired_slot = &self.slots.items[@intCast(index)];
         retired_slot.generation = nextGeneration(retired_slot.generation);
@@ -216,6 +320,8 @@ pub const DataSystem = struct {
         retired_slot.facing_index = null;
         retired_slot.primitive_visual_index = null;
         retired_slot.asset_ref_index = null;
+        retired_slot.collision_bounds_index = null;
+        retired_slot.collision_response_index = null;
         self.first_free_slot = index;
         return true;
     }
@@ -236,6 +342,8 @@ pub const DataSystem = struct {
 
     pub fn clearRetainingCapacity(self: *DataSystem) void {
         self.asset_refs.clearRetainingCapacity(self.allocator);
+        self.collision_bounds.clearRetainingCapacity();
+        self.collision_responses.clearRetainingCapacity();
         self.primitive_visuals.clearRetainingCapacity();
         self.facings.clearRetainingCapacity();
         self.movement_bodies.clearRetainingCapacity();
@@ -250,6 +358,8 @@ pub const DataSystem = struct {
             slot.facing_index = null;
             slot.primitive_visual_index = null;
             slot.asset_ref_index = null;
+            slot.collision_bounds_index = null;
+            slot.collision_response_index = null;
             self.first_free_slot = @intCast(index);
         }
     }
@@ -280,6 +390,12 @@ pub const DataSystem = struct {
         const slot = self.resolveSlotConst(id) orelse return null;
         const dense_index = slot.movement_body_index orelse return null;
         return self.movement_bodies.get(@intCast(dense_index));
+    }
+
+    pub fn movementBodyDenseIndex(self: *const DataSystem, id: EntityId) ?usize {
+        const slot = self.resolveSlotConst(id) orelse return null;
+        const dense_index = slot.movement_body_index orelse return null;
+        return @intCast(dense_index);
     }
 
     pub fn movementBodySlice(self: *DataSystem) MovementBodySlice {
@@ -345,7 +461,7 @@ pub const DataSystem = struct {
     }
 
     pub fn setAssetReference(self: *DataSystem, id: EntityId, asset_ref: AssetReference) !void {
-        try assets_mod.validateRelativePath(asset_ref.relative_path);
+        try assets.validateRelativePath(asset_ref.relative_path);
         const slot = self.resolveSlot(id) orelse return error.InvalidEntity;
 
         const owned_path = try self.allocator.dupe(u8, asset_ref.relative_path);
@@ -371,6 +487,177 @@ pub const DataSystem = struct {
 
     pub fn assetReferenceSliceConst(self: *const DataSystem) ConstAssetReferenceSlice {
         return self.asset_refs.sliceConst();
+    }
+
+    pub fn setCollisionBounds(self: *DataSystem, id: EntityId, bounds: CollisionBounds) !void {
+        try validateCollisionBounds(bounds);
+        const slot = self.resolveSlot(id) orelse return error.InvalidEntity;
+        if (slot.collision_bounds_index) |index| {
+            self.collision_bounds.set(@intCast(index), bounds);
+            return;
+        }
+
+        const dense_index = try self.collision_bounds.append(self.allocator, id, bounds);
+        slot.collision_bounds_index = dense_index;
+        slot.addComponent(.collision_bounds);
+    }
+
+    pub fn collisionBoundsConst(self: *const DataSystem, id: EntityId) ?CollisionBounds {
+        const slot = self.resolveSlotConst(id) orelse return null;
+        const dense_index = slot.collision_bounds_index orelse return null;
+        return self.collision_bounds.get(@intCast(dense_index));
+    }
+
+    pub fn collisionBoundsSliceConst(self: *const DataSystem) ConstCollisionBoundsSlice {
+        return self.collision_bounds.sliceConst();
+    }
+
+    pub fn setCollisionResponse(self: *DataSystem, id: EntityId, response: CollisionResponse) !void {
+        try validateCollisionResponse(response);
+        const slot = self.resolveSlot(id) orelse return error.InvalidEntity;
+        if (slot.collision_response_index) |index| {
+            self.collision_responses.set(@intCast(index), response);
+            return;
+        }
+
+        const dense_index = try self.collision_responses.append(self.allocator, id, response);
+        slot.collision_response_index = dense_index;
+        slot.addComponent(.collision_response);
+    }
+
+    pub fn collisionResponseConst(self: *const DataSystem, id: EntityId) ?CollisionResponse {
+        const slot = self.resolveSlotConst(id) orelse return null;
+        const dense_index = slot.collision_response_index orelse return null;
+        return self.collision_responses.get(@intCast(dense_index));
+    }
+
+    pub fn collisionResponseSliceConst(self: *const DataSystem) ConstCollisionResponseSlice {
+        return self.collision_responses.sliceConst();
+    }
+
+    pub fn applyStructuralCommands(self: *DataSystem, commands: []const StructuralCommand) !StructuralCommitStats {
+        try validateStructuralCommands(commands);
+        var stats = StructuralCommitStats{};
+        for (commands) |command| {
+            switch (command) {
+                .create_entity => |template| {
+                    if (template.asset_reference) |asset_ref| {
+                        try assets.validateRelativePath(asset_ref.relative_path);
+                    }
+                    const entity = try self.createEntity();
+                    errdefer _ = self.destroyEntity(entity);
+                    stats.created += 1;
+                    stats.components_set += try self.applyTemplateComponents(entity, template);
+                },
+                .destroy_entity => |entity| {
+                    if (self.destroyEntity(entity)) {
+                        stats.destroyed += 1;
+                    } else {
+                        stats.stale_skipped += 1;
+                    }
+                },
+                .set_movement_body => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setMovementBody(set.entity, set.body);
+                    stats.components_set += 1;
+                },
+                .set_facing => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setFacing(set.entity, set.facing);
+                    stats.components_set += 1;
+                },
+                .set_primitive_visual => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setPrimitiveVisual(set.entity, set.visual);
+                    stats.components_set += 1;
+                },
+                .set_asset_reference => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setAssetReference(set.entity, set.asset_reference);
+                    stats.components_set += 1;
+                },
+                .set_collision_bounds => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setCollisionBounds(set.entity, set.bounds);
+                    stats.components_set += 1;
+                },
+                .set_collision_response => |set| {
+                    if (!self.isAlive(set.entity)) {
+                        stats.stale_skipped += 1;
+                        continue;
+                    }
+                    try self.setCollisionResponse(set.entity, set.response);
+                    stats.components_set += 1;
+                },
+            }
+        }
+        return stats;
+    }
+
+    fn validateStructuralCommands(commands: []const StructuralCommand) !void {
+        for (commands) |command| {
+            switch (command) {
+                .create_entity => |template| {
+                    if (template.asset_reference) |asset_ref| {
+                        try assets.validateRelativePath(asset_ref.relative_path);
+                    }
+                    if (template.collision_bounds) |bounds| {
+                        try validateCollisionBounds(bounds);
+                    }
+                    if (template.collision_response) |response| {
+                        try validateCollisionResponse(response);
+                    }
+                },
+                .set_asset_reference => |set| try assets.validateRelativePath(set.asset_reference.relative_path),
+                .set_collision_bounds => |set| try validateCollisionBounds(set.bounds),
+                .set_collision_response => |set| try validateCollisionResponse(set.response),
+                else => {},
+            }
+        }
+    }
+
+    fn applyTemplateComponents(self: *DataSystem, entity: EntityId, template: EntityTemplate) !usize {
+        var components_set: usize = 0;
+        if (template.movement_body) |body| {
+            try self.setMovementBody(entity, body);
+            components_set += 1;
+        }
+        if (template.facing) |facing| {
+            try self.setFacing(entity, facing);
+            components_set += 1;
+        }
+        if (template.primitive_visual) |visual| {
+            try self.setPrimitiveVisual(entity, visual);
+            components_set += 1;
+        }
+        if (template.asset_reference) |asset_ref| {
+            try self.setAssetReference(entity, asset_ref);
+            components_set += 1;
+        }
+        if (template.collision_bounds) |bounds| {
+            try self.setCollisionBounds(entity, bounds);
+            components_set += 1;
+        }
+        if (template.collision_response) |response| {
+            try self.setCollisionResponse(entity, response);
+            components_set += 1;
+        }
+        return components_set;
     }
 
     fn resolveSlot(self: *DataSystem, id: EntityId) ?*EntitySlot {
@@ -414,6 +701,16 @@ pub const DataSystem = struct {
         const moved = self.asset_refs.removeAt(self.allocator, index);
         if (moved) |entity| self.slots.items[@intCast(entity.index)].asset_ref_index = @intCast(index);
     }
+
+    fn removeCollisionBoundsAt(self: *DataSystem, index: usize) void {
+        const moved = self.collision_bounds.removeAt(index);
+        if (moved) |entity| self.slots.items[@intCast(entity.index)].collision_bounds_index = @intCast(index);
+    }
+
+    fn removeCollisionResponseAt(self: *DataSystem, index: usize) void {
+        const moved = self.collision_responses.removeAt(index);
+        if (moved) |entity| self.slots.items[@intCast(entity.index)].collision_response_index = @intCast(index);
+    }
 };
 
 const EntitySlot = struct {
@@ -425,6 +722,8 @@ const EntitySlot = struct {
     facing_index: ?u32 = null,
     primitive_visual_index: ?u32 = null,
     asset_ref_index: ?u32 = null,
+    collision_bounds_index: ?u32 = null,
+    collision_response_index: ?u32 = null,
 
     fn addComponent(self: *EntitySlot, component: Component) void {
         self.component_mask |= componentMask(component);
@@ -434,6 +733,17 @@ const EntitySlot = struct {
         return (self.component_mask & mask) == mask;
     }
 };
+
+fn validateCollisionBounds(bounds: CollisionBounds) !void {
+    if (!std.math.isFinite(bounds.offset.x) or !std.math.isFinite(bounds.offset.y)) return error.InvalidCollisionBounds;
+    if (!std.math.isFinite(bounds.size.x) or !std.math.isFinite(bounds.size.y)) return error.InvalidCollisionBounds;
+    if (bounds.size.x <= 0 or bounds.size.y <= 0) return error.InvalidCollisionBounds;
+}
+
+fn validateCollisionResponse(response: CollisionResponse) !void {
+    if (!std.math.isFinite(response.restitution)) return error.InvalidCollisionResponse;
+    if (response.restitution < 0) return error.InvalidCollisionResponse;
+}
 
 const MovementBodyStore = struct {
     entities: std.ArrayList(EntityId) = .empty,
@@ -873,6 +1183,170 @@ const AssetReferenceStore = struct {
     }
 };
 
+const CollisionBoundsStore = struct {
+    entities: std.ArrayList(EntityId) = .empty,
+    offset_x: HotF32List = .empty,
+    offset_y: HotF32List = .empty,
+    size_x: HotF32List = .empty,
+    size_y: HotF32List = .empty,
+
+    fn append(self: *CollisionBoundsStore, allocator: std.mem.Allocator, entity: EntityId, bounds: CollisionBounds) !u32 {
+        if (self.entities.items.len >= std.math.maxInt(u32)) return error.TooManyCollisionBoundsRows;
+        try self.ensureCapacityForOne(allocator);
+        const index: u32 = @intCast(self.entities.items.len);
+        self.entities.appendAssumeCapacity(entity);
+        self.offset_x.appendAssumeCapacity(bounds.offset.x);
+        self.offset_y.appendAssumeCapacity(bounds.offset.y);
+        self.size_x.appendAssumeCapacity(bounds.size.x);
+        self.size_y.appendAssumeCapacity(bounds.size.y);
+        return index;
+    }
+
+    fn set(self: *CollisionBoundsStore, index: usize, bounds: CollisionBounds) void {
+        self.offset_x.items[index] = bounds.offset.x;
+        self.offset_y.items[index] = bounds.offset.y;
+        self.size_x.items[index] = bounds.size.x;
+        self.size_y.items[index] = bounds.size.y;
+    }
+
+    fn get(self: *const CollisionBoundsStore, index: usize) CollisionBounds {
+        return .{
+            .offset = .{ .x = self.offset_x.items[index], .y = self.offset_y.items[index] },
+            .size = .{ .x = self.size_x.items[index], .y = self.size_y.items[index] },
+        };
+    }
+
+    fn removeAt(self: *CollisionBoundsStore, index: usize) ?EntityId {
+        const last = self.entities.items.len - 1;
+        const moved_entity = if (index != last) self.entities.items[last] else null;
+        self.entities.items[index] = self.entities.items[last];
+        self.offset_x.items[index] = self.offset_x.items[last];
+        self.offset_y.items[index] = self.offset_y.items[last];
+        self.size_x.items[index] = self.size_x.items[last];
+        self.size_y.items[index] = self.size_y.items[last];
+        _ = self.entities.pop();
+        _ = self.offset_x.pop();
+        _ = self.offset_y.pop();
+        _ = self.size_x.pop();
+        _ = self.size_y.pop();
+        return moved_entity;
+    }
+
+    fn sliceConst(self: *const CollisionBoundsStore) ConstCollisionBoundsSlice {
+        return .{
+            .entities = self.entities.items,
+            .offset_x = self.offset_x.items,
+            .offset_y = self.offset_y.items,
+            .size_x = self.size_x.items,
+            .size_y = self.size_y.items,
+        };
+    }
+
+    fn clearRetainingCapacity(self: *CollisionBoundsStore) void {
+        self.entities.clearRetainingCapacity();
+        self.offset_x.clearRetainingCapacity();
+        self.offset_y.clearRetainingCapacity();
+        self.size_x.clearRetainingCapacity();
+        self.size_y.clearRetainingCapacity();
+    }
+
+    fn deinit(self: *CollisionBoundsStore, allocator: std.mem.Allocator) void {
+        self.entities.deinit(allocator);
+        self.offset_x.deinit(allocator);
+        self.offset_y.deinit(allocator);
+        self.size_x.deinit(allocator);
+        self.size_y.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn ensureCapacityForOne(self: *CollisionBoundsStore, allocator: std.mem.Allocator) !void {
+        const capacity = self.entities.items.len + 1;
+        try self.entities.ensureTotalCapacity(allocator, capacity);
+        try self.offset_x.ensureTotalCapacity(allocator, capacity);
+        try self.offset_y.ensureTotalCapacity(allocator, capacity);
+        try self.size_x.ensureTotalCapacity(allocator, capacity);
+        try self.size_y.ensureTotalCapacity(allocator, capacity);
+    }
+};
+
+const CollisionResponseStore = struct {
+    entities: std.ArrayList(EntityId) = .empty,
+    modes: std.ArrayList(CollisionResponseMode) = .empty,
+    mobilities: std.ArrayList(CollisionResponseMobility) = .empty,
+    restitution: HotF32List = .empty,
+
+    fn append(self: *CollisionResponseStore, allocator: std.mem.Allocator, entity: EntityId, response: CollisionResponse) !u32 {
+        if (self.entities.items.len >= std.math.maxInt(u32)) return error.TooManyCollisionResponseRows;
+        try self.ensureCapacityForOne(allocator);
+        const index: u32 = @intCast(self.entities.items.len);
+        self.entities.appendAssumeCapacity(entity);
+        self.modes.appendAssumeCapacity(response.mode);
+        self.mobilities.appendAssumeCapacity(response.mobility);
+        self.restitution.appendAssumeCapacity(response.restitution);
+        return index;
+    }
+
+    fn set(self: *CollisionResponseStore, index: usize, response: CollisionResponse) void {
+        self.modes.items[index] = response.mode;
+        self.mobilities.items[index] = response.mobility;
+        self.restitution.items[index] = response.restitution;
+    }
+
+    fn get(self: *const CollisionResponseStore, index: usize) CollisionResponse {
+        return .{
+            .mode = self.modes.items[index],
+            .mobility = self.mobilities.items[index],
+            .restitution = self.restitution.items[index],
+        };
+    }
+
+    fn removeAt(self: *CollisionResponseStore, index: usize) ?EntityId {
+        const last = self.entities.items.len - 1;
+        const moved_entity = if (index != last) self.entities.items[last] else null;
+        self.entities.items[index] = self.entities.items[last];
+        self.modes.items[index] = self.modes.items[last];
+        self.mobilities.items[index] = self.mobilities.items[last];
+        self.restitution.items[index] = self.restitution.items[last];
+        _ = self.entities.pop();
+        _ = self.modes.pop();
+        _ = self.mobilities.pop();
+        _ = self.restitution.pop();
+        return moved_entity;
+    }
+
+    fn sliceConst(self: *const CollisionResponseStore) ConstCollisionResponseSlice {
+        return .{
+            .entities = self.entities.items,
+            .modes = self.modes.items,
+            .mobilities = self.mobilities.items,
+            .restitution = self.restitution.items,
+        };
+    }
+
+    fn clearRetainingCapacity(self: *CollisionResponseStore) void {
+        self.entities.clearRetainingCapacity();
+        self.modes.clearRetainingCapacity();
+        self.mobilities.clearRetainingCapacity();
+        self.restitution.clearRetainingCapacity();
+    }
+
+    fn deinit(self: *CollisionResponseStore, allocator: std.mem.Allocator) void {
+        self.entities.deinit(allocator);
+        self.modes.deinit(allocator);
+        self.mobilities.deinit(allocator);
+        self.restitution.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn ensureCapacityForOne(self: *CollisionResponseStore, allocator: std.mem.Allocator) !void {
+        const capacity = self.entities.items.len + 1;
+        try self.entities.ensureTotalCapacity(allocator, capacity);
+        try self.modes.ensureTotalCapacity(allocator, capacity);
+        try self.mobilities.ensureTotalCapacity(allocator, capacity);
+        try self.restitution.ensureTotalCapacity(allocator, capacity);
+    }
+};
+
 fn nextGeneration(generation: u32) u32 {
     const next = generation +% 1;
     return if (next == 0) 1 else next;
@@ -918,6 +1392,24 @@ fn expectPrimitiveVisualColumnsAligned(slice: ConstPrimitiveVisualSlice) !void {
     try std.testing.expectEqual(slice.entities.len, slice.marker_lengths.len);
     try std.testing.expectEqual(slice.entities.len, slice.marker_depths.len);
     try std.testing.expectEqual(slice.entities.len, slice.marker_margins.len);
+}
+
+fn expectCollisionBoundsColumnsAligned(slice: ConstCollisionBoundsSlice) !void {
+    try std.testing.expectEqual(slice.entities.len, slice.offset_x.len);
+    try std.testing.expectEqual(slice.entities.len, slice.offset_y.len);
+    try std.testing.expectEqual(slice.entities.len, slice.size_x.len);
+    try std.testing.expectEqual(slice.entities.len, slice.size_y.len);
+    try expectPointerAligned(slice.offset_x.ptr);
+    try expectPointerAligned(slice.offset_y.ptr);
+    try expectPointerAligned(slice.size_x.ptr);
+    try expectPointerAligned(slice.size_y.ptr);
+}
+
+fn expectCollisionResponseColumnsAligned(slice: ConstCollisionResponseSlice) !void {
+    try std.testing.expectEqual(slice.entities.len, slice.modes.len);
+    try std.testing.expectEqual(slice.entities.len, slice.mobilities.len);
+    try std.testing.expectEqual(slice.entities.len, slice.restitution.len);
+    try expectPointerAligned(slice.restitution.ptr);
 }
 
 test "entity ids reject invalid values and match slots exactly" {
@@ -991,11 +1483,17 @@ test "component masks track entity membership for system queries" {
     try data.setFacing(entity, .{ .direction = .right });
     try std.testing.expect(data.hasComponents(entity, component_masks.movement_body | component_masks.facing));
     try std.testing.expect(!data.hasComponents(entity, component_masks.render_primitive));
+    try std.testing.expect(!data.hasComponents(entity, component_masks.collision_bounds));
+    try std.testing.expect(!data.hasComponents(entity, component_masks.collision_response));
 
     try data.setPrimitiveVisual(entity, testVisual());
+    try data.setCollisionBounds(entity, testBounds(2));
+    try data.setCollisionResponse(entity, testResponse(.solid, .dynamic, 0));
     try std.testing.expect(data.hasComponents(entity, component_masks.render_primitive));
+    try std.testing.expect(data.hasComponents(entity, component_masks.collision_bounds));
+    try std.testing.expect(data.hasComponents(entity, component_masks.collision_response));
     try std.testing.expectEqual(
-        component_masks.movement_body | component_masks.facing | component_masks.primitive_visual,
+        component_masks.movement_body | component_masks.facing | component_masks.primitive_visual | component_masks.collision_bounds | component_masks.collision_response,
         data.componentMaskFor(entity),
     );
 
@@ -1060,12 +1558,16 @@ test "destroying an entity removes every attached data row" {
     try data.setFacing(entity, .{ .direction = .right });
     try data.setPrimitiveVisual(entity, testVisual());
     try data.setAssetReference(entity, .{ .relative_path = "sprites/player.png" });
+    try data.setCollisionBounds(entity, testBounds(1));
+    try data.setCollisionResponse(entity, testResponse(.bounce, .dynamic, 0.75));
 
     try std.testing.expect(data.destroyEntity(entity));
     try std.testing.expectEqual(@as(usize, 0), data.movementBodySliceConst().entities.len);
     try std.testing.expectEqual(@as(usize, 0), data.facingSliceConst().entities.len);
     try std.testing.expectEqual(@as(usize, 0), data.primitiveVisualSliceConst().entities.len);
     try std.testing.expectEqual(@as(usize, 0), data.assetReferenceSliceConst().entities.len);
+    try std.testing.expectEqual(@as(usize, 0), data.collisionBoundsSliceConst().entities.len);
+    try std.testing.expectEqual(@as(usize, 0), data.collisionResponseSliceConst().entities.len);
 }
 
 test "primitive visual store is columnar and compact after removal" {
@@ -1125,6 +1627,159 @@ test "asset references validate safe relative paths and own path storage" {
     try std.testing.expectError(error.InvalidAssetPath, data.setAssetReference(entity, .{ .relative_path = "" }));
 }
 
+test "collision bounds store is columnar compact and rejects invalid bounds" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const first = try data.createEntity();
+    const second = try data.createEntity();
+    const third = try data.createEntity();
+    try data.setCollisionBounds(first, testBounds(1));
+    try data.setCollisionBounds(second, testBounds(2));
+    try data.setCollisionBounds(third, testBounds(3));
+    try data.setCollisionBounds(first, .{ .offset = .{ .x = 4, .y = 5 }, .size = .{ .x = 6, .y = 7 } });
+
+    try std.testing.expectEqual(@as(f32, 4), data.collisionBoundsConst(first).?.offset.x);
+    try std.testing.expectEqual(@as(f32, 6), data.collisionBoundsConst(first).?.size.x);
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .size = .{ .x = 0, .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .size = .{ .x = -1, .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .offset = .{ .x = std.math.inf(f32), .y = 0 }, .size = .{ .x = 1, .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .offset = .{ .x = -std.math.inf(f32), .y = 0 }, .size = .{ .x = 1, .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .offset = .{ .x = std.math.nan(f32), .y = 0 }, .size = .{ .x = 1, .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .size = .{ .x = std.math.inf(f32), .y = 1 } }));
+    try std.testing.expectError(error.InvalidCollisionBounds, data.setCollisionBounds(first, .{ .size = .{ .x = std.math.nan(f32), .y = 1 } }));
+
+    try std.testing.expect(data.destroyEntity(second));
+    const slice = data.collisionBoundsSliceConst();
+    try expectCollisionBoundsColumnsAligned(slice);
+    try std.testing.expectEqual(@as(usize, 2), slice.entities.len);
+    try std.testing.expect(data.collisionBoundsConst(first) != null);
+    try std.testing.expect(data.collisionBoundsConst(third) != null);
+    try std.testing.expect(data.collisionBoundsConst(second) == null);
+}
+
+test "collision response store is columnar compact and rejects invalid response data" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const first = try data.createEntity();
+    const second = try data.createEntity();
+    const third = try data.createEntity();
+    try data.setCollisionResponse(first, testResponse(.solid, .dynamic, 0));
+    try data.setCollisionResponse(second, testResponse(.bounce, .dynamic, 0.5));
+    try data.setCollisionResponse(third, testResponse(.trigger, .static, 1));
+    try data.setCollisionResponse(first, testResponse(.bounce, .dynamic, 0.75));
+
+    const first_response = data.collisionResponseConst(first).?;
+    try std.testing.expectEqual(CollisionResponseMode.bounce, first_response.mode);
+    try std.testing.expectEqual(CollisionResponseMobility.dynamic, first_response.mobility);
+    try std.testing.expectEqual(@as(f32, 0.75), first_response.restitution);
+    try std.testing.expectError(error.InvalidCollisionResponse, data.setCollisionResponse(first, testResponse(.bounce, .dynamic, -0.01)));
+    try std.testing.expectError(error.InvalidCollisionResponse, data.setCollisionResponse(first, testResponse(.bounce, .dynamic, std.math.inf(f32))));
+    try std.testing.expectError(error.InvalidCollisionResponse, data.setCollisionResponse(first, testResponse(.bounce, .dynamic, std.math.nan(f32))));
+
+    try std.testing.expect(data.destroyEntity(second));
+    const slice = data.collisionResponseSliceConst();
+    try expectCollisionResponseColumnsAligned(slice);
+    try std.testing.expectEqual(@as(usize, 2), slice.entities.len);
+    try std.testing.expect(data.collisionResponseConst(first) != null);
+    try std.testing.expect(data.collisionResponseConst(third) != null);
+    try std.testing.expect(data.collisionResponseConst(second) == null);
+}
+
+test "structural commands apply entity creation and component changes in order" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const existing = try data.createEntity();
+    const commands = [_]StructuralCommand{
+        .{ .create_entity = .{
+            .movement_body = testBody(10),
+            .facing = .{ .direction = .left },
+            .primitive_visual = testVisualWithSize(20),
+            .collision_bounds = testBounds(6),
+            .collision_response = testResponse(.solid, .dynamic, 0),
+        } },
+        .{ .set_movement_body = .{ .entity = existing, .body = testBody(3) } },
+        .{ .set_facing = .{ .entity = existing, .facing = .{ .direction = .right } } },
+        .{ .set_collision_bounds = .{ .entity = existing, .bounds = testBounds(8) } },
+        .{ .set_collision_response = .{ .entity = existing, .response = testResponse(.bounce, .dynamic, 0.8) } },
+    };
+
+    const stats = try data.applyStructuralCommands(&commands);
+
+    try std.testing.expectEqual(@as(usize, 1), stats.created);
+    try std.testing.expectEqual(@as(usize, 0), stats.destroyed);
+    try std.testing.expectEqual(@as(usize, 9), stats.components_set);
+    try std.testing.expectEqual(@as(usize, 0), stats.stale_skipped);
+    try std.testing.expectEqual(@as(usize, 2), data.movementBodySliceConst().entities.len);
+    try std.testing.expectEqual(@as(f32, 3), data.movementBodyConst(existing).?.position.x);
+    try std.testing.expectEqual(Facing.right, data.facingConst(existing).?.direction);
+    try std.testing.expectEqual(@as(f32, 8), data.collisionBoundsConst(existing).?.size.x);
+    try std.testing.expectEqual(CollisionResponseMode.bounce, data.collisionResponseConst(existing).?.mode);
+}
+
+test "structural commands skip stale entities and preserve deterministic command order" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const entity = try data.createEntity();
+    try data.setMovementBody(entity, testBody(1));
+    const stale = entity;
+    try std.testing.expect(data.destroyEntity(entity));
+    const replacement = try data.createEntity();
+
+    const commands = [_]StructuralCommand{
+        .{ .set_movement_body = .{ .entity = stale, .body = testBody(99) } },
+        .{ .set_movement_body = .{ .entity = replacement, .body = testBody(4) } },
+        .{ .set_movement_body = .{ .entity = replacement, .body = testBody(5) } },
+        .{ .destroy_entity = stale },
+    };
+
+    const stats = try data.applyStructuralCommands(&commands);
+
+    try std.testing.expectEqual(@as(usize, 0), stats.created);
+    try std.testing.expectEqual(@as(usize, 0), stats.destroyed);
+    try std.testing.expectEqual(@as(usize, 2), stats.components_set);
+    try std.testing.expectEqual(@as(usize, 2), stats.stale_skipped);
+    try std.testing.expectEqual(@as(f32, 5), data.movementBodyConst(replacement).?.position.x);
+}
+
+test "structural commands validate asset references before creating entities" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const commands = [_]StructuralCommand{
+        .{ .create_entity = .{
+            .movement_body = testBody(1),
+            .asset_reference = .{ .relative_path = "../bad.png" },
+        } },
+    };
+
+    try std.testing.expectError(error.InvalidAssetPath, data.applyStructuralCommands(&commands));
+    try std.testing.expectEqual(@as(usize, 0), data.movementBodySliceConst().entities.len);
+}
+
+test "structural commands prevalidate fallible data before mutating" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const existing = try data.createEntity();
+    try data.setMovementBody(existing, testBody(1));
+
+    const commands = [_]StructuralCommand{
+        .{ .set_movement_body = .{ .entity = existing, .body = testBody(99) } },
+        .{ .create_entity = .{
+            .movement_body = testBody(2),
+            .asset_reference = .{ .relative_path = "../bad.png" },
+        } },
+    };
+
+    try std.testing.expectError(error.InvalidAssetPath, data.applyStructuralCommands(&commands));
+    try std.testing.expectEqual(@as(f32, 1), data.movementBodyConst(existing).?.position.x);
+    try std.testing.expectEqual(@as(usize, 1), data.movementBodySliceConst().entities.len);
+}
+
 test "movement body slice access performs no allocations" {
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
@@ -1172,5 +1827,20 @@ fn testVisualWithSize(size: f32) PrimitiveVisual {
         .marker_length = 12,
         .marker_depth = 6,
         .marker_margin = 4,
+    };
+}
+
+fn testBounds(base: f32) CollisionBounds {
+    return .{
+        .offset = .{ .x = base, .y = base + 1 },
+        .size = .{ .x = base, .y = base + 2 },
+    };
+}
+
+fn testResponse(mode: CollisionResponseMode, mobility: CollisionResponseMobility, restitution: f32) CollisionResponse {
+    return .{
+        .mode = mode,
+        .mobility = mobility,
+        .restitution = restitution,
     };
 }

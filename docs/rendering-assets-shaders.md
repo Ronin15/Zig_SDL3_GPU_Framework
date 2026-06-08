@@ -17,7 +17,7 @@ live under `src/render/gpu/` and load the shader files matching
 
 ## Sprite Rendering
 
-Sprites and colored rectangles are collected into a CPU batch, uploaded to one
+Sprites and colored rectangles are collected into a CPU sprite batch, uploaded to one
 GPU vertex buffer per frame, sorted by layer and submission order, and submitted
 by texture and coordinate-presentation groups. Texture ownership is tracked with
 generational `TextureId` values so stale or destroyed IDs are rejected
@@ -32,10 +32,7 @@ Use `drawSprite` for textured quads:
 
 ```zig
 if (self.player_texture == null) {
-    self.player_texture = try context.asset_cache.acquireTexture(
-        context.renderer,
-        "sprites/player.png",
-    );
+    self.player_texture = try context.acquireTexture("sprites/player.png");
 }
 
 try context.renderer.drawSprite(.{
@@ -113,16 +110,17 @@ shader formats. Package source assets separately if your game needs them.
 Asset paths are relative to the configured asset root and reject empty paths,
 absolute paths, `.` components, and `..` traversal.
 
-PNG texture loading uses core SDL3 `SDL_LoadPNG`/`SDL_LoadSurface` support; this
+PNG image loading uses core SDL3 `SDL_LoadPNG` support in the asset layer; this
 project does not require `SDL3_image`.
 
 The asset cache maps validated relative PNG paths to renderer `TextureId` values.
-Loading the same path more than once reuses the existing texture and increments a
-retain count. Store the returned `TextureLease` in the owning state or service,
-draw with `lease.id`, and call `release` from that owner's `deinit`. When the
-last lease is released, the cache destroys the renderer texture. Cache lookup and
-retain/release are setup-time operations; per-frame rendering should keep using
-the retained `TextureId` directly.
+Loading the same path decodes PNG data through `AssetStore`, uploads decoded
+RGBA8 pixels through the renderer, reuses the existing texture on later
+acquires, and increments a retain count. Store the returned `TextureLease` in
+the owning state or service, draw with `lease.id`, and call `release` from that
+owner's `deinit`. When the last lease is released, the cache destroys the
+renderer texture. Cache lookup and retain/release are setup-time operations;
+per-frame rendering should keep using the retained `TextureId` directly.
 
 ## Text Rendering
 
@@ -141,7 +139,9 @@ part of the normal runtime path.
 
 Add GLSL source under `assets/shaders/`, then add an entry to the
 `shader_programs` table in `build.zig` so the build emits the platform shader
-files. Load the resulting installed shader files from `src/render/renderer.zig`.
+files. Load the resulting installed shader files from the render-owned GPU
+pipeline module, such as `src/render/gpu/sprite_pipeline.zig`, while keeping
+`Renderer` as the game-facing facade.
 
 Keep shader resource bindings aligned with SDL_GPU's layout rules:
 

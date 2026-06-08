@@ -7,8 +7,7 @@
 //! not per-frame draw submission.
 
 const std = @import("std");
-const assets_mod = @import("../assets/assets.zig");
-const AssetStore = assets_mod.AssetStore;
+const assets = @import("../assets/assets.zig");
 const config = @import("../config.zig");
 const log = @import("../core/logging.zig").render;
 const Renderer = @import("renderer.zig").Renderer;
@@ -106,7 +105,7 @@ pub const FontDesc = struct {
     point_size: f32,
 
     pub fn validate(self: FontDesc) !void {
-        try assets_mod.validateRelativePath(self.asset_path);
+        try assets.validateRelativePath(self.asset_path);
         if (self.point_size <= 0 or self.point_size != self.point_size) return error.InvalidFontSize;
     }
 };
@@ -161,7 +160,7 @@ pub const RenderedText = struct {
 
 pub const TextService = struct {
     allocator: std.mem.Allocator,
-    assets: AssetStore,
+    assets: assets.AssetStore,
     backend: TextBackend,
     fonts: std.ArrayList(FontSlot) = .empty,
     entries: std.ArrayList(TextEntrySlot) = .empty,
@@ -172,8 +171,8 @@ pub const TextService = struct {
     default_font: FontId = FontId.invalid,
     ttf_initialized: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, assets: AssetStore) !TextService {
-        var service = initWithBackend(allocator, assets, rendererBackend());
+    pub fn init(allocator: std.mem.Allocator, assetStore: assets.AssetStore) !TextService {
+        var service = initWithBackend(allocator, assetStore, rendererBackend());
         errdefer service.deinitAfterFailedInit();
 
         if (!c.TTF_Init()) {
@@ -233,10 +232,10 @@ pub const TextService = struct {
         return self.acquireTextWithContext(@ptrCast(renderer), request);
     }
 
-    fn initWithBackend(allocator: std.mem.Allocator, assets: AssetStore, backend: TextBackend) TextService {
+    fn initWithBackend(allocator: std.mem.Allocator, assetStore: assets.AssetStore, backend: TextBackend) TextService {
         return .{
             .allocator = allocator,
-            .assets = assets,
+            .assets = assetStore,
             .backend = backend,
         };
     }
@@ -655,7 +654,7 @@ fn rendererRenderText(context: *anyopaque, font: *c.TTF_Font, request: TextReque
         };
     defer c.SDL_DestroySurface(surface);
 
-    const texture = try renderer.createTextureFromSurface(surface);
+    const texture = try createTextureFromTextSurface(renderer, surface);
     errdefer renderer.destroyTexture(texture);
     const desc = renderer.textureDesc(texture) orelse return error.InvalidTexture;
     return .{
@@ -663,6 +662,30 @@ fn rendererRenderText(context: *anyopaque, font: *c.TTF_Font, request: TextReque
         .width = desc.width,
         .height = desc.height,
     };
+}
+
+fn createTextureFromTextSurface(renderer: *Renderer, surface: *c.SDL_Surface) !TextureId {
+    const converted = c.SDL_ConvertSurface(surface, c.SDL_PIXELFORMAT_RGBA32) orelse {
+        log.err("SDL_ConvertSurface failed for rendered text: {s}", .{c.SDL_GetError()});
+        return error.SdlError;
+    };
+    defer c.SDL_DestroySurface(converted);
+
+    if (!c.SDL_LockSurface(converted)) {
+        log.err("SDL_LockSurface failed for rendered text: {s}", .{c.SDL_GetError()});
+        return error.SdlError;
+    }
+    defer c.SDL_UnlockSurface(converted);
+
+    const pixels = converted.*.pixels orelse return error.SdlError;
+    const pitch: usize = @intCast(converted.*.pitch);
+    const byte_len = pitch * @as(usize, @intCast(converted.*.h));
+    return renderer.createTextureFromPixels(
+        @as([*]const u8, @ptrCast(pixels))[0..byte_len],
+        @intCast(converted.*.w),
+        @intCast(converted.*.h),
+        pitch,
+    );
 }
 
 fn rendererDestroyTexture(context: *anyopaque, texture: TextureId) void {
@@ -753,7 +776,7 @@ const FakeBackend = struct {
 fn initFakeTextService(allocator: std.mem.Allocator, fake: *FakeBackend) !TextService {
     var service = TextService.initWithBackend(
         allocator,
-        AssetStore.init(allocator, std.testing.io, "assets"),
+        assets.AssetStore.init(allocator, std.testing.io, "assets"),
         FakeBackend.backend(),
     );
     const owned_path = try allocator.dupe(u8, default_font_path);

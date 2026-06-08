@@ -21,10 +21,10 @@ resource ownership, fixed-step simulation, and processor-friendly gameplay data.
   boundaries.
 - **Data-oriented architecture:** dense component stores for direct,
   cache-friendly processor iteration over gameplay data.
-- **Threaded and SIMD processors:** movement and particle updates with serial,
-  SIMD, and worker-thread execution paths.
+- **Threaded and SIMD processors:** movement, particle, and collision workloads
+  with serial, SIMD-friendly, and worker-thread execution paths.
 - **Comprehensive tests:** coverage for state transitions, input routing,
-  resource lifetime, renderer math, threaded batches, and SIMD/scalar parity so
+  resource lifetime, renderer math, threaded CPU range batches, and SIMD/scalar parity so
   framework behavior stays stable as it grows.
 - **Runtime asset and text services:** traversal-safe asset paths, core SDL3 PNG
   loading, asset-backed SDL3_ttf text rendering, and an F2 FPS overlay.
@@ -38,6 +38,7 @@ For deeper details, see [architecture](docs/architecture.md),
 - Zig 0.16.0 or a compatible 0.16.x build
 - SDL3 development headers and library
 - SDL3_ttf development headers and library
+- SDL3_mixer development headers and library
 - `glslc` for shader compilation
 - `spirv-cross` for macOS Metal shader generation
 
@@ -67,8 +68,9 @@ runs the app.
 zig build           # build and install a runnable app into zig-out/bin
 zig build run       # build, install assets/shaders, and run the app
 zig build dev       # build shaders, install assets, and run the app
-zig build check     # compile the game and GPU smoke executable
+zig build check     # compile the game, benchmark, and GPU smoke executables
 zig build test      # run Zig unit tests
+zig build bench     # run non-interactive CPU processor benchmarks
 zig build verify    # run check, test, and shader compilation
 zig build package   # install selected-mode binaries and runtime assets
 zig build gpu-smoke # create an SDL_GPU device and submit one frame

@@ -14,14 +14,18 @@ pub fn main(init: std.process.Init) !void {
     var sdl_context = try sdl.SdlContext.init(c.SDL_INIT_VIDEO);
     defer sdl_context.deinit();
 
-    var window = try sdl.Window.create("SDL_GPU Smoke", 320, 180, 0);
-    defer window.deinit();
-
     const app_config = config.AppConfig{
         .app_name = "gpu-smoke",
         .window_title = "SDL_GPU Smoke",
         .gpu_debug = true,
     };
+    var window = try sdl.Window.create(
+        "SDL_GPU Smoke",
+        320,
+        180,
+        sdl.composeWindowFlags(app_config.resizable, app_config.high_pixel_density),
+    );
+    defer window.deinit();
     const assets = AssetStore.init(init.gpa, init.io, app_config.asset_root);
 
     var renderer = try Renderer.init(init.gpa, window.handle, assets, app_config);

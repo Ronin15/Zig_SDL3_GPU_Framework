@@ -42,35 +42,52 @@ pub fn build(b: *std.Build) void {
     const gpu_shader_formats = shaderFormatsForTarget(target.result.os.tag);
     const force_llvm_lld = forceLlvmLldForTarget(target);
 
-    const build_options = b.addOptions();
-    build_options.addOption([]const u8, "app_name", app_name);
-    build_options.addOption([]const u8, "window_title", window_title);
-    build_options.addOption([]const u8, "asset_root", asset_root);
-    build_options.addOption(bool, "gpu_debug", gpu_debug);
-    build_options.addOption(bool, "debug_overlay", debug_overlay);
-    build_options.addOption(u8, "log_level", @intFromEnum(log_level));
-    build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
+    const buildOptions = b.addOptions();
+    buildOptions.addOption([]const u8, "app_name", app_name);
+    buildOptions.addOption([]const u8, "window_title", window_title);
+    buildOptions.addOption([]const u8, "asset_root", asset_root);
+    buildOptions.addOption(bool, "gpu_debug", gpu_debug);
+    buildOptions.addOption(bool, "debug_overlay", debug_overlay);
+    buildOptions.addOption(u8, "log_level", @intFromEnum(log_level));
+    buildOptions.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
-    const exe_mod = createGameModule(b, target, optimize, build_options);
+    const benchBuildOptions = b.addOptions();
+    benchBuildOptions.addOption([]const u8, "app_name", app_name);
+    benchBuildOptions.addOption([]const u8, "window_title", window_title);
+    benchBuildOptions.addOption([]const u8, "asset_root", asset_root);
+    benchBuildOptions.addOption(bool, "gpu_debug", gpu_debug);
+    benchBuildOptions.addOption(bool, "debug_overlay", debug_overlay);
+    benchBuildOptions.addOption(u8, "log_level", @intFromEnum(std.log.Level.warn));
+    benchBuildOptions.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
+
+    const exeModule = createGameModule(b, target, optimize, buildOptions);
 
     const exe = b.addExecutable(.{
         .name = app_name,
-        .root_module = exe_mod,
+        .root_module = exeModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
 
-    const gpu_smoke_mod = createSdlModule(b, target, optimize, build_options, "src/gpu_smoke.zig");
+    const gpuSmokeModule = createSdlModule(b, target, optimize, buildOptions, "src/gpu_smoke.zig");
     const gpu_smoke_exe = b.addExecutable(.{
         .name = "gpu-smoke",
-        .root_module = gpu_smoke_mod,
+        .root_module = gpuSmokeModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
 
-    const unit_tests_mod = createSdlModule(b, target, optimize, build_options, "src/tests.zig");
+    const benchModule = createSdlModule(b, target, optimize, benchBuildOptions, "src/benchmark_runner.zig");
+    const bench_exe = b.addExecutable(.{
+        .name = "benchmarks",
+        .root_module = benchModule,
+        .use_llvm = force_llvm_lld,
+        .use_lld = force_llvm_lld,
+    });
+
+    const unitTestsModule = createSdlModule(b, target, optimize, buildOptions, "src/tests.zig");
     const unit_tests = b.addTest(.{
-        .root_module = unit_tests_mod,
+        .root_module = unitTestsModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
@@ -89,6 +106,7 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Compile without installing");
     check_step.dependOn(&exe.step);
     check_step.dependOn(&gpu_smoke_exe.step);
+    check_step.dependOn(&bench_exe.step);
 
     const fmt_step = b.step("fmt", "Format Zig source files");
     fmt_step.dependOn(&b.addFmt(.{
@@ -119,6 +137,13 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(unit_tests).step);
+
+    const bench_run = b.addRunArtifact(bench_exe);
+    if (b.args) |args| {
+        bench_run.addArgs(args);
+    }
+    const bench_step = b.step("bench", "Run CPU gameplay processor benchmarks");
+    bench_step.dependOn(&bench_run.step);
 
     const verify_step = b.step("verify", "Run non-interactive checks for local development");
     verify_step.dependOn(check_step);
@@ -165,6 +190,7 @@ fn createSdlModule(
     mod.addOptions("build_options", build_options);
     mod.linkSystemLibrary("SDL3", .{});
     mod.linkSystemLibrary("SDL3_ttf", .{});
+    mod.linkSystemLibrary("SDL3_mixer", .{});
     return mod;
 }
 

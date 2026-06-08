@@ -16,14 +16,14 @@ Use the existing docs as source of truth for deeper details:
 ## Ownership Boundaries
 
 - `src/main.zig` owns the executable entry point and high-level fixed-step timing loop.
-- `src/app/` owns SDL app coordination, input, time loop, frame pacing, pause policy, state stack flow, and the thread system.
+- `src/app/` owns SDL app coordination, input, time loop, frame pacing, pause policy, state stack flow, audio service, and the thread system.
 - `src/render/` owns SDL_GPU rendering, camera transforms, renderer resources, text, FPS/debug overlay, and frame submission.
 - `src/game/` owns game/application states, gameplay behavior, `DataSystem`, and ECS-style gameplay systems/processors.
 - `src/platform/` owns SDL C imports, small platform wrappers, and GPU smoke-test implementation.
 - `src/assets/` owns runtime asset path resolution and safe installed asset loading.
 - `src/core/` owns small shared helpers such as math primitives.
 - `src/root.zig` is the minimal test/root file for math aliases and compile coverage.
-- `assets/` contains runtime assets and shader sources. Runtime assets install under `zig-out/bin/assets` by default.
+- `assets/` contains runtime assets, audio files, and shader sources. Runtime assets install under `zig-out/bin/assets` by default.
 
 Add new code under the matching owner directory. Keep executable-only code near
 `main.zig`, app flow under `src/app/`, rendering and GPU resource code under
@@ -35,6 +35,8 @@ Add new code under the matching owner directory. Keep executable-only code near
 - `StateStack` owns state lifetimes, state destruction, policies, and transition application.
 - Queue state transitions through `StateTransitions` from state dispatch, then apply them after dispatch completes.
 - Game states draw through `Renderer`; keep SDL_GPU device, swapchain, shader, texture, and command submission details in render/platform layers.
+- Game states request sound through `AudioCommandBuffer`; keep SDL_mixer
+  device, mixer, track, bus, and loaded-audio ownership in the app audio service.
 - Map raw input to named actions. Keep held gameplay input in `InputState` separate from one-frame app commands in `FrameCommands`.
 - Let stack policies decide whether lower states receive update, input, or render passes.
 - Treat `DataSystem` as the persistent gameplay data owner and ECS storage foundation:
@@ -45,13 +47,14 @@ Add new code under the matching owner directory. Keep executable-only code near
 - Keep hot ECS component data in dense SoA columns. Component masks are for
   membership/query decisions, not a replacement for direct slice iteration in
   hot processors.
-- Keep state transitions, entity structural changes, SDL/GPU calls, asset
-  loading, save/load streaming, and renderer resource ownership out of threaded
-  SIMD processors unless an explicit deferred/main-thread boundary is designed.
+- Keep state transitions, entity structural changes, SDL/GPU/audio calls, asset
+  loading, save/load streaming, renderer resource ownership, and mixer resource
+  ownership out of threaded SIMD processors unless an explicit
+  deferred/main-thread boundary is designed.
 - Keep debug UI state in the debug overlay path, not in gameplay state.
 - Keep runtime asset paths relative and traversal-safe.
 - Use core SDL3 PNG loading for textures. Do not add `SDL3_image` unless that dependency is explicitly chosen.
-- SDL3 and SDL3_ttf are system dependencies; avoid vendoring or half-adopting external dependencies.
+- SDL3, SDL3_ttf, and SDL3_mixer are system dependencies; avoid vendoring or half-adopting external dependencies.
 - Pair SDL resource creation with cleanup close to the creation site.
 - Treat performance as a correctness constraint in hot paths: fixed-step update,
   input dispatch, render submission, asset lookup, and text/debug overlay.
@@ -79,7 +82,8 @@ Add new code under the matching owner directory. Keep executable-only code near
 - `zig build run` builds, installs runtime assets/shaders, and runs the app.
 - `zig build dev` builds shaders, installs assets, and runs the app for normal development.
 - `zig build test` runs reusable module tests plus SDL-linked compile coverage.
-- `zig build check` compiles the game and GPU smoke executable without installing.
+- `zig build check` compiles the game, benchmark, and GPU smoke executables without installing.
+- `zig build bench` runs non-interactive CPU entity and particle processor benchmarks.
 - `zig build verify` runs check, tests, and shader compilation.
 - `zig build shaders` compiles platform GPU shaders.
 - `zig build gpu-smoke` runs a display-gated SDL_GPU frame submission check.
@@ -101,6 +105,17 @@ Follow `zig fmt`; use 4-space indentation and avoid manual alignment that the
 formatter will rewrite. Use Zig-style lowerCamelCase for variables and
 functions, `PascalCase` for types, and short descriptive names. Keep error sets
 explicit when practical, as in `error{SdlError}`.
+
+Prefer direct declaration imports for project types and constants when that
+keeps call sites clear, such as `const Engine = @import("app/engine.zig").Engine;`
+or `const ThreadSystem = @import("app/thread_system.zig").ThreadSystem;`. Use a
+concise lowerCamelCase file namespace only when the call site is clearer as a
+function/namespace lookup, such as `inputFile.actionForKey(...)` or
+`assets.validateRelativePath(...)`. Avoid `_mod` suffixes, `const Type =
+file.Type` bridge aliases, and double names such as `thread.ThreadSystem`. Do
+not rewrite SDL/C symbols, generated build-option names, or `std.Build` field
+names. Keep `Renderer` as the render facade for app/game code; do not import
+`src/render/gpu/*` outside the render/platform boundary.
 
 Use Zig `test` blocks and `std.testing`. Put reusable module tests beside the
 code they cover, and name tests by behavior, such as

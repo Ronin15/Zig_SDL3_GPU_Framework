@@ -6,15 +6,17 @@
 //! This system intentionally owns its own fixed-capacity SoA pool because
 //! particles are visual effect state, not persistent DataSystem entities.
 
+const builtin = @import("builtin");
 const std = @import("std");
-const ThreadSystem = @import("../../app/thread_system.zig").ThreadSystem;
-const ParallelRange = @import("../../app/thread_system.zig").ParallelRange;
-const BatchStats = @import("../../app/thread_system.zig").BatchStats;
 const config = @import("../../config.zig");
 const math = @import("../../core/math.zig");
 const simd = @import("../../core/simd.zig");
-const renderer_mod = @import("../../render/renderer.zig");
-const Renderer = renderer_mod.Renderer;
+const Renderer = @import("../../render/renderer.zig").Renderer;
+const AdaptiveWorkTuner = @import("../../app/thread_system.zig").AdaptiveWorkTuner;
+const BatchStats = @import("../../app/thread_system.zig").BatchStats;
+const ParallelRange = @import("../../app/thread_system.zig").ParallelRange;
+const ThreadSystem = @import("../../app/thread_system.zig").ThreadSystem;
+const WorkerId = @import("../../app/thread_system.zig").WorkerId;
 
 pub const hot_particle_column_alignment: usize = 64;
 pub const particle_range_alignment_items: usize = hot_particle_column_alignment / @sizeOf(f32);
@@ -29,9 +31,10 @@ pub const ParticleSystemConfig = struct {
 
 pub const ParticleUpdateConfig = struct {
     min_parallel_items: ?usize = null,
-    grain_size: ?usize = null,
+    items_per_range: ?usize = null,
     max_worker_threads: ?usize = null,
     adaptive: bool = true,
+    adaptive_tuner: ?*AdaptiveWorkTuner = null,
 };
 
 pub const ParticleUpdateStats = struct {
@@ -163,11 +166,13 @@ pub const ParticleSystem = struct {
     end_color_b: HotF32List = .empty,
     end_color_a: HotF32List = .empty,
     layers: std.ArrayList(i32) = .empty,
+    adaptive_tuner: AdaptiveWorkTuner = AdaptiveWorkTuner.init(.{}),
 
     pub fn init(allocator: std.mem.Allocator, system_config: ParticleSystemConfig) !ParticleSystem {
         var self = ParticleSystem{
             .allocator = allocator,
             .capacity = system_config.capacity,
+            .adaptive_tuner = AdaptiveWorkTuner.init(.{}),
         };
         errdefer self.deinit();
         try self.reserveStorage(system_config.capacity);
@@ -341,12 +346,17 @@ pub const ParticleSystem = struct {
             .particles = particles,
             .delta_seconds = delta_seconds,
         };
+        const adaptive_tuner = if (update_config.adaptive and update_config.items_per_range == null)
+            update_config.adaptive_tuner orelse &self.adaptive_tuner
+        else
+            null;
         const batch = thread_system.parallelForWithOptions(active_before, &context, particleJob, .{
             .min_parallel_items = update_config.min_parallel_items,
-            .grain_size = update_config.grain_size,
+            .items_per_range = update_config.items_per_range,
             .max_worker_threads = update_config.max_worker_threads,
             .range_alignment_items = particle_range_alignment_items,
             .adaptive = update_config.adaptive,
+            .adaptive_tuner = adaptive_tuner,
         });
         const removed = self.removeExpiredSwap();
         return .{
@@ -371,7 +381,7 @@ pub const ParticleSystem = struct {
             .batch = .{
                 .item_count = active_before,
                 .range_count = if (active_before > 0) 1 else 0,
-                .grain_size = active_before,
+                .items_per_range = active_before,
                 .range_alignment_items = particle_range_alignment_items,
                 .main_thread_ranges = if (active_before > 0) 1 else 0,
                 .ran_inline = true,
@@ -548,7 +558,7 @@ pub const ParticleSystem = struct {
     }
 };
 
-fn particleJob(context: *anyopaque, range: ParallelRange, _: @import("../../app/thread_system.zig").WorkerId) void {
+fn particleJob(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *ParticleJobContext = @ptrCast(@alignCast(context));
     processRange(&job.particles, range, job.delta_seconds);
 }
@@ -672,7 +682,7 @@ fn updateSerialScalarForTest(system: *ParticleSystem, delta_seconds: f32) Partic
         .batch = .{
             .item_count = active_before,
             .range_count = if (active_before > 0) 1 else 0,
-            .grain_size = active_before,
+            .items_per_range = active_before,
             .range_alignment_items = particle_range_alignment_items,
             .main_thread_ranges = if (active_before > 0) 1 else 0,
             .ran_inline = true,
@@ -798,7 +808,7 @@ test "serial particle simd path matches scalar path" {
 }
 
 test "threaded particle update matches serial update" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var threaded_particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
     defer threaded_particles.deinit();
@@ -810,20 +820,106 @@ test "threaded particle update matches serial update" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
-        .grain_size = particle_range_alignment_items,
+        .items_per_range = particle_range_alignment_items,
     });
     defer threads.deinit();
 
     const stats = threaded_particles.update(&threads, 0.25, .{
         .min_parallel_items = 1,
-        .grain_size = particle_range_alignment_items,
+        .items_per_range = particle_range_alignment_items,
         .max_worker_threads = 2,
         .adaptive = false,
     });
     _ = serial_particles.updateSerial(0.25);
 
     try std.testing.expect(!stats.batch.ran_inline);
+    try std.testing.expectEqual(particle_range_alignment_items, stats.batch.items_per_range);
     try expectParticlesApproxEqual(&threaded_particles, &serial_particles);
+}
+
+test "particle explicit items_per_range bypasses tuner" {
+    if (builtin.single_threaded) return error.SkipZigTest;
+
+    var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
+    defer particles.deinit();
+    fillParticles(&particles, particle_range_alignment_items * 8);
+
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .items_per_range = particle_range_alignment_items,
+    });
+    defer threads.deinit();
+
+    var adaptive_tuner = AdaptiveWorkTuner.init(.{
+        .initial_items_per_range = particle_range_alignment_items * 2,
+        .min_items_per_range = particle_range_alignment_items,
+        .max_items_per_range = particle_range_alignment_items * 4,
+    });
+    const stats = particles.update(&threads, 0.25, .{
+        .min_parallel_items = 1,
+        .items_per_range = particle_range_alignment_items,
+        .max_worker_threads = 2,
+        .adaptive_tuner = &adaptive_tuner,
+    });
+
+    try std.testing.expectEqual(particle_range_alignment_items, stats.batch.items_per_range);
+    try std.testing.expectEqual(@as(usize, 0), adaptive_tuner.report().sample_count);
+    try std.testing.expectEqual(@as(u64, 0), adaptive_tuner.report().best_mean_batch_duration_ns);
+    try std.testing.expectEqual(@as(usize, 0), particles.adaptive_tuner.report().sample_count);
+}
+
+test "particle system owns adaptive tuner for default update" {
+    if (builtin.single_threaded) return error.SkipZigTest;
+
+    var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
+    defer particles.deinit();
+    fillParticles(&particles, particle_range_alignment_items * 8);
+
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .items_per_range = particle_range_alignment_items,
+    });
+    defer threads.deinit();
+
+    var stats = ParticleUpdateStats{};
+    for (0..particles.adaptive_tuner.report().sample_window) |_| {
+        stats = particles.update(&threads, 0.25, .{
+            .min_parallel_items = 1,
+            .max_worker_threads = 2,
+        });
+    }
+
+    try std.testing.expectEqual(particle_range_alignment_items * 8, stats.active_before);
+    try std.testing.expect(particles.adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
+}
+
+test "particle update uses provided adaptive tuner" {
+    if (builtin.single_threaded) return error.SkipZigTest;
+
+    var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
+    defer particles.deinit();
+    fillParticles(&particles, particle_range_alignment_items * 8);
+
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .items_per_range = particle_range_alignment_items,
+    });
+    defer threads.deinit();
+
+    var adaptive_tuner = AdaptiveWorkTuner.init(.{ .sample_window = 1 });
+    const stats = particles.update(&threads, 0.25, .{
+        .min_parallel_items = 1,
+        .max_worker_threads = 2,
+        .adaptive_tuner = &adaptive_tuner,
+    });
+
+    try std.testing.expectEqual(particle_range_alignment_items * 8, stats.active_before);
+    try std.testing.expect(adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
 }
 
 test "particle range only writes assigned rows" {
@@ -859,7 +955,7 @@ test "warmed particle update and emission do not allocate" {
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 0,
         .min_parallel_items = 1,
-        .grain_size = particle_range_alignment_items,
+        .items_per_range = particle_range_alignment_items,
     });
     defer threads.deinit();
 
@@ -876,7 +972,7 @@ test "warmed particle update and emission do not allocate" {
     const emitted = particles.emitBurst(.{ .count = 2, .lifetime = 1 });
     const stats = particles.update(&threads, 0.016, .{
         .min_parallel_items = 1,
-        .grain_size = particle_range_alignment_items,
+        .items_per_range = particle_range_alignment_items,
     });
 
     try std.testing.expectEqual(@as(usize, 2), emitted);

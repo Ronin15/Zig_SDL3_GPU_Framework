@@ -7,8 +7,8 @@
 //! points. Hot render paths should keep drawing with retained TextureId values.
 
 const std = @import("std");
-const assets_mod = @import("assets.zig");
-const AssetStore = assets_mod.AssetStore;
+const assets = @import("assets.zig");
+const image = @import("image.zig");
 const log = @import("../core/logging.zig").assets;
 const Renderer = @import("../render/renderer.zig").Renderer;
 const TextureId = @import("../render/resources.zig").TextureId;
@@ -40,14 +40,14 @@ pub const TextureLease = struct {
 
 pub const AssetCache = struct {
     allocator: std.mem.Allocator,
-    assets: AssetStore,
+    assets: assets.AssetStore,
     backend: TextureBackend,
     entries: std.StringHashMapUnmanaged(TextureEntry) = .empty,
     lease_slots: std.ArrayList(LeaseSlot) = .empty,
     first_free_lease_slot: ?u32 = null,
 
-    pub fn init(allocator: std.mem.Allocator, assets: AssetStore) AssetCache {
-        return initWithBackend(allocator, assets, rendererBackend());
+    pub fn init(allocator: std.mem.Allocator, assetStore: assets.AssetStore) AssetCache {
+        return initWithBackend(allocator, assetStore, rendererBackend());
     }
 
     pub fn deinit(self: *AssetCache, renderer: *Renderer) void {
@@ -58,10 +58,10 @@ pub const AssetCache = struct {
         return self.acquireTextureWithContext(@ptrCast(renderer), relative_path);
     }
 
-    fn initWithBackend(allocator: std.mem.Allocator, assets: AssetStore, backend: TextureBackend) AssetCache {
+    fn initWithBackend(allocator: std.mem.Allocator, assetStore: assets.AssetStore, backend: TextureBackend) AssetCache {
         return .{
             .allocator = allocator,
-            .assets = assets,
+            .assets = assetStore,
             .backend = backend,
         };
     }
@@ -71,7 +71,7 @@ pub const AssetCache = struct {
         backend_context: *anyopaque,
         relative_path: []const u8,
     ) !TextureLease {
-        try assets_mod.validateRelativePath(relative_path);
+        try assets.validateRelativePath(relative_path);
 
         if (self.entries.getPtr(relative_path)) |entry| {
             if (entry.retain_count == std.math.maxInt(u32)) return error.TooManyTextureLeases;
@@ -90,7 +90,13 @@ pub const AssetCache = struct {
         var entry_inserted = false;
         errdefer if (!entry_inserted) self.allocator.free(owned_path);
 
-        const texture = try self.backend.load_png(backend_context, self.assets, owned_path);
+        var loaded_image = image.loadPng(self.assets, owned_path) catch |err| {
+            log.warn("texture asset unavailable \"{s}\": {}", .{ owned_path, err });
+            return err;
+        };
+        defer loaded_image.deinit();
+
+        const texture = try self.backend.upload_image(backend_context, loaded_image);
         var texture_inserted = false;
         errdefer if (!texture_inserted) self.backend.destroy_texture(backend_context, texture);
 
@@ -260,20 +266,20 @@ const LeaseSlot = struct {
 };
 
 const TextureBackend = struct {
-    load_png: *const fn (*anyopaque, AssetStore, []const u8) anyerror!TextureId,
+    upload_image: *const fn (*anyopaque, image.LoadedImage) anyerror!TextureId,
     destroy_texture: *const fn (*anyopaque, TextureId) void,
 };
 
 fn rendererBackend() TextureBackend {
     return .{
-        .load_png = rendererLoadPng,
+        .upload_image = rendererUploadImage,
         .destroy_texture = rendererDestroyTexture,
     };
 }
 
-fn rendererLoadPng(context: *anyopaque, assets: AssetStore, relative_path: []const u8) !TextureId {
+fn rendererUploadImage(context: *anyopaque, loaded_image: image.LoadedImage) !TextureId {
     const renderer: *Renderer = @ptrCast(@alignCast(context));
-    return renderer.createTextureFromPng(assets, relative_path);
+    return renderer.createTextureFromPixels(loaded_image.pixels, loaded_image.width, loaded_image.height, loaded_image.pitch);
 }
 
 fn rendererDestroyTexture(context: *anyopaque, texture: TextureId) void {
@@ -291,27 +297,31 @@ fn nextGeneration(generation: u32) u32 {
 }
 
 const FakeBackend = struct {
-    load_count: u32 = 0,
+    upload_count: u32 = 0,
     destroy_count: u32 = 0,
     next_index: u32 = 0,
-    fail_load: bool = false,
+    fail_upload: bool = false,
+    last_width: u32 = 0,
+    last_height: u32 = 0,
+    last_pitch: usize = 0,
 
     fn backend() TextureBackend {
         return .{
-            .load_png = loadPng,
+            .upload_image = uploadImage,
             .destroy_texture = destroyTexture,
         };
     }
 
-    fn loadPng(context: *anyopaque, assets: AssetStore, relative_path: []const u8) !TextureId {
-        _ = assets;
-        _ = relative_path;
+    fn uploadImage(context: *anyopaque, loaded_image: image.LoadedImage) !TextureId {
         const self: *FakeBackend = @ptrCast(@alignCast(context));
-        if (self.fail_load) return error.FakeLoadFailed;
+        if (self.fail_upload) return error.FakeUploadFailed;
 
         const texture = try TextureId.init(self.next_index, 1);
         self.next_index += 1;
-        self.load_count += 1;
+        self.upload_count += 1;
+        self.last_width = loaded_image.width;
+        self.last_height = loaded_image.height;
+        self.last_pitch = loaded_image.pitch;
         return texture;
     }
 
@@ -325,7 +335,7 @@ const FakeBackend = struct {
 fn testCache(allocator: std.mem.Allocator) AssetCache {
     return AssetCache.initWithBackend(
         allocator,
-        AssetStore.init(allocator, std.testing.io, "assets"),
+        assets.AssetStore.init(allocator, std.testing.io, "assets"),
         FakeBackend.backend(),
     );
 }
@@ -341,7 +351,10 @@ test "duplicate texture acquires reuse the same cached id" {
     var second = try cache.acquireTextureWithContext(&fake, "test/cache_probe.png");
     defer second.release();
 
-    try std.testing.expectEqual(@as(u32, 1), fake.load_count);
+    try std.testing.expectEqual(@as(u32, 1), fake.upload_count);
+    try std.testing.expect(fake.last_width > 0);
+    try std.testing.expect(fake.last_height > 0);
+    try std.testing.expect(fake.last_pitch >= fake.last_width * 4);
     try std.testing.expect(textureIdsEqual(first.id, second.id));
     try std.testing.expect(first.isAlive());
     try std.testing.expect(second.isAlive());
@@ -395,23 +408,23 @@ test "copied stale texture lease release does not touch freed cache path" {
     try std.testing.expectEqual(@as(u32, 1), fake.destroy_count);
 }
 
-test "invalid texture paths fail before backend load" {
+test "invalid texture paths fail before backend upload" {
     const allocator = std.testing.allocator;
     var fake = FakeBackend{};
     var cache = testCache(allocator);
     defer cache.deinitWithContext(&fake);
 
     try std.testing.expectError(error.InvalidAssetPath, cache.acquireTextureWithContext(&fake, "../bad.png"));
-    try std.testing.expectEqual(@as(u32, 0), fake.load_count);
+    try std.testing.expectEqual(@as(u32, 0), fake.upload_count);
 }
 
-test "texture load failures leave no cached entry" {
+test "texture upload failures leave no cached entry" {
     const allocator = std.testing.allocator;
-    var fake = FakeBackend{ .fail_load = true };
+    var fake = FakeBackend{ .fail_upload = true };
     var cache = testCache(allocator);
     defer cache.deinitWithContext(&fake);
 
-    try std.testing.expectError(error.FakeLoadFailed, cache.acquireTextureWithContext(&fake, "test/cache_probe.png"));
+    try std.testing.expectError(error.FakeUploadFailed, cache.acquireTextureWithContext(&fake, "test/cache_probe.png"));
     try std.testing.expectEqual(@as(u32, 0), fake.destroy_count);
     try std.testing.expectEqual(@as(usize, 0), cache.entries.count());
 }
@@ -422,8 +435,7 @@ test "cache deinit destroys remaining live textures" {
     var cache = testCache(allocator);
 
     _ = try cache.acquireTextureWithContext(&fake, "test/cache_probe.png");
-    _ = try cache.acquireTextureWithContext(&fake, "test/other.png");
 
     cache.deinitWithContext(&fake);
-    try std.testing.expectEqual(@as(u32, 2), fake.destroy_count);
+    try std.testing.expectEqual(@as(u32, 1), fake.destroy_count);
 }

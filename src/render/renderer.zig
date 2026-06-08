@@ -146,11 +146,16 @@ pub const Renderer = struct {
     }
 
     pub fn drawRect(self: *Renderer, rect: Rect, color: config.Color, layer: i32) !void {
+        try self.drawRectInSpace(rect, color, layer, .world);
+    }
+
+    pub fn drawRectInSpace(self: *Renderer, rect: Rect, color: config.Color, layer: i32, coordinate_space: CoordinateSpace) !void {
         try self.drawSprite(.{
             .texture = self.white_texture,
             .dest = rect,
             .tint = color,
             .layer = layer,
+            .coordinate_space = coordinate_space,
         });
     }
 
@@ -165,47 +170,6 @@ pub const Renderer = struct {
         const scale_y = @as(f32, @floatFromInt(presentation.drawable_size.height)) /
             @as(f32, @floatFromInt(presentation.window_size.height));
         return @max(1.0, @max(scale_x, scale_y));
-    }
-
-    pub fn createTextureFromPng(self: *Renderer, assets: AssetStore, relative_path: []const u8) !TextureId {
-        const path = assets.resolveReadablePath(relative_path) catch |err| {
-            log.err("failed to resolve PNG texture asset \"{s}\": {}", .{ relative_path, err });
-            return err;
-        };
-        defer self.allocator.free(path);
-
-        const path_z = try self.allocator.dupeZ(u8, path);
-        defer self.allocator.free(path_z);
-
-        const loaded = c.SDL_LoadPNG(path_z.ptr) orelse {
-            log.err("SDL_LoadPNG failed for texture \"{s}\": {s}", .{ relative_path, c.SDL_GetError() });
-            return error.SdlError;
-        };
-        defer c.SDL_DestroySurface(loaded);
-
-        return try self.createTextureFromSurface(loaded);
-    }
-
-    pub fn createTextureFromSurface(self: *Renderer, surface: *c.SDL_Surface) !TextureId {
-        const converted = c.SDL_ConvertSurface(surface, c.SDL_PIXELFORMAT_RGBA32) orelse {
-            return sdlError("SDL_ConvertSurface");
-        };
-        defer c.SDL_DestroySurface(converted);
-
-        if (!c.SDL_LockSurface(converted)) {
-            return sdlError("SDL_LockSurface");
-        }
-        defer c.SDL_UnlockSurface(converted);
-
-        const pixels_ptr: [*]const u8 = @ptrCast(converted.*.pixels.?);
-        const pitch: usize = @intCast(converted.*.pitch);
-        const byte_len = pitch * @as(usize, @intCast(converted.*.h));
-        return try self.createTextureFromPixels(
-            pixels_ptr[0..byte_len],
-            @intCast(converted.*.w),
-            @intCast(converted.*.h),
-            pitch,
-        );
     }
 
     pub fn destroyTexture(self: *Renderer, id: TextureId) void {

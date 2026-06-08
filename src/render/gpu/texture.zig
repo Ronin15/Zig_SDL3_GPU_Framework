@@ -61,8 +61,8 @@ pub fn uploadFromPixels(
     const command_buffer = c.SDL_AcquireGPUCommandBuffer(device) orelse {
         return sdlError("SDL_AcquireGPUCommandBuffer");
     };
-    var command_submitted = false;
-    errdefer if (!command_submitted) {
+    var command_buffer_finished = false;
+    errdefer if (!command_buffer_finished) {
         _ = c.SDL_CancelGPUCommandBuffer(command_buffer);
     };
 
@@ -92,7 +92,7 @@ pub fn uploadFromPixels(
     if (!c.SDL_SubmitGPUCommandBuffer(command_buffer)) {
         return sdlError("SDL_SubmitGPUCommandBuffer");
     }
-    command_submitted = true;
+    command_buffer_finished = true;
 
     return .{
         .texture = texture,

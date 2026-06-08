@@ -5,14 +5,13 @@
 const config = @import("../config.zig");
 const InputState = @import("../app/input.zig").InputState;
 const math = @import("../core/math.zig");
-const data_mod = @import("data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
-const Facing = data_mod.Facing;
-const PrimitiveVisual = data_mod.PrimitiveVisual;
-const renderer = @import("../render/renderer.zig");
-const Renderer = renderer.Renderer;
-const Rect = renderer.Rect;
+const std = @import("std");
+const DataSystem = @import("data_system.zig").DataSystem;
+const EntityId = @import("data_system.zig").EntityId;
+const Facing = @import("data_system.zig").Facing;
+const PrimitiveVisual = @import("data_system.zig").PrimitiveVisual;
+const Renderer = @import("../render/renderer.zig").Renderer;
+const Rect = @import("../render/renderer.zig").Rect;
 
 pub const Player = struct {
     entity: EntityId = EntityId.invalid,
@@ -96,6 +95,14 @@ pub const Player = struct {
     }
 
     pub fn onPause(self: Player, data: *DataSystem) void {
+        self.syncPreviousPosition(data);
+    }
+
+    pub fn onResume(self: Player, data: *DataSystem) void {
+        self.syncPreviousPosition(data);
+    }
+
+    pub fn syncPreviousPosition(self: Player, data: *DataSystem) void {
         const body = data.movementBodyPtr(self.entity) orelse return;
         body.previous_x.* = body.position_x.*;
         body.previous_y.* = body.position_y.*;
@@ -148,8 +155,7 @@ fn markerRect(position: math.Vec2, facing: Facing, visual: PrimitiveVisual) Rect
 }
 
 test "player movement clamps to state bounds" {
-    const std = @import("std");
-    const movement_system = @import("systems/movement.zig");
+    const movement = @import("systems/movement.zig");
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -164,7 +170,8 @@ test "player movement clamps to state bounds" {
     input.setHeld(.moveUp, true);
 
     try player.applyInput(&data, &input);
-    movement_system.updateSerial(&data, 1.0);
+    var movement_slice = data.movementBodySlice();
+    movement.updateSerial(&movement_slice, 1.0);
     try player.clampToBounds(&data, 800, 450);
 
     const body = data.movementBodyConst(player.entity).?;
@@ -173,7 +180,6 @@ test "player movement clamps to state bounds" {
 }
 
 test "player facing updates from movement and remains while idle" {
-    const std = @import("std");
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -189,7 +195,6 @@ test "player facing updates from movement and remains while idle" {
 }
 
 test "player horizontal facing wins for diagonal movement" {
-    const std = @import("std");
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -203,8 +208,7 @@ test "player horizontal facing wins for diagonal movement" {
     try std.testing.expectEqual(Facing.right, data.facingConst(player.entity).?.direction);
 }
 
-test "player pause syncs previous position to current data position" {
-    const std = @import("std");
+test "player pause and resume sync previous position to current data position" {
     var data = DataSystem.init(std.testing.allocator);
     defer data.deinit();
     const player = try Player.spawn(&data);
@@ -219,4 +223,12 @@ test "player pause syncs previous position to current data position" {
     const paused = data.movementBodyConst(player.entity).?;
     try std.testing.expectEqual(paused.position.x, paused.previous_position.x);
     try std.testing.expectEqual(paused.position.y, paused.previous_position.y);
+
+    body.position_x.* = 48;
+    body.position_y.* = 96;
+    player.onResume(&data);
+
+    const resumed = data.movementBodyConst(player.entity).?;
+    try std.testing.expectEqual(resumed.position.x, resumed.previous_position.x);
+    try std.testing.expectEqual(resumed.position.y, resumed.previous_position.y);
 }

@@ -24,10 +24,20 @@ adding broad abstraction.
 
 - Finish Slice 7 parallel CPU render prep and Slice 8 shader/platform
   validation as engine-support tracks.
-- Use Slice 12 as the gameplay-systems foundation before broad collision, AI,
-  pathfinding, or emergent-rule work.
-- Treat Slice 13 and Slice 14 as dependent on Slice 12's deterministic
-  processor, event, and deferred-structural-change contracts.
+- Slice 12 is now the gameplay-systems foundation for broad collision, AI,
+  pathfinding, and emergent-rule work.
+- Treat Slice 13 and Slice 14 as built on Slice 12's deterministic processor,
+  event, and deferred-structural-change contracts.
+
+## Long-Term Gameplay Direction
+
+Future gameplay features should use domain controllers for orchestration and
+SoA processors for hot data work. Controllers belong inside the owning gameplay
+state or a state-owned world simulation layer; they choose phase order, budgets,
+queues, conflict policy, and which typed `DataSystem` views processors receive.
+Persistent world facts still live in `DataSystem`, per-step outputs live in
+`SimulationFrame`, and large or reusable loops stay in systems that process
+typed slices and emit deterministic outputs.
 
 ## Slice 0: Runtime Diagnostics Policy
 
@@ -56,7 +66,7 @@ Checklist:
 Acceptance checks:
 
 - [x] `zig build test` compiles the test root with the shared log policy.
-- [x] `zig build check` compiles the app and GPU smoke executable.
+- [x] `zig build check` compiles the app, GPU smoke, and benchmark executables.
 - [x] `zig build check --release=safe` verifies the release log-level default.
 - [x] Project-wide diagnostic audit confirms no meaningful subsystem still uses default-scope logging or noisy warning/error severity.
 
@@ -138,7 +148,9 @@ Acceptance checks:
 - [x] Existing demo renders correctly at the default 1280x720 logical size.
 - [x] Resizable windows preserve the configured scale policy.
 - [x] Letterbox offsets are centered and stable.
-- [x] Hidden/minimized/no-swapchain frame policy still behaves as before.
+- [x] Hidden/minimized windows still skip rendering and use fallback pacing;
+      visible no-swapchain frames enter render-blocked gameplay pause before
+      the next update.
 - [x] `zig build test`, `zig build check`, `zig build verify`, and
       `zig build gpu-smoke` cover unit, compile, shader, and one-frame GPU smoke
       validation. Manual `zig build dev` resize/pause smoke confirmed Retina
@@ -168,8 +180,8 @@ Checklist:
 - [x] Add `TextureId` creation, validation, lookup, and destruction helpers.
 - [x] Keep draw submission lookup array-backed and allocation-free.
 - [x] Preserve the white texture as an internal renderer resource.
-- [x] Keep `createTextureFromPng`, `createTextureFromPixels`, and
-      `replaceTextureFromPixels` behavior compatible during migration.
+- [x] Keep renderer texture creation centered on decoded pixel uploads through
+      `createTextureFromPixels` and `replaceTextureFromPixels`.
 - [x] Add tests for stale IDs, destroyed IDs, invalid generation, and descriptor
       validation.
 - [x] Add a focused compatibility note for the `TextureHandle` to `TextureId`
@@ -192,12 +204,26 @@ Current foundation:
 
 - `AssetStore` resolves safe relative paths from repo root or executable-relative
   install location.
-- Renderer can load PNGs directly through `createTextureFromPng`.
+- `AssetStore` resolves and decodes PNGs into transient CPU `LoadedImage` data.
 - `AssetCache` maps validated relative PNG paths to retained renderer
-  `TextureId` values.
+  `TextureId` values by decoding through assets and asking render to upload
+  already-decoded pixels.
 - `Engine` owns the cache and exposes it to states through `RenderContext`.
 - `assets/test/cache_probe.png` provides a tiny installed PNG fixture for cache
   and asset-root checks.
+
+Future render-data slice:
+
+- Entity creation and world loading should bind texture handles or atlas-region
+  handles before render-time. `DataSystem` render data should store prepared
+  render references such as `TextureId` plus source rectangle, tint, layer, and
+  coordinate-space intent.
+- A state-owned render-prep system should read immutable `DataSystem` slices and
+  submit prepared `Sprite` commands to `Renderer`. The renderer should not look
+  up gameplay entities, world data, asset paths, or texture assignments.
+- Atlas work should build on the same boundary: assets decode source images,
+  atlas code packs CPU pixels, render uploads the final atlas texture, and
+  entities reference atlas regions.
 
 Checklist:
 
@@ -339,7 +365,8 @@ Thread-system design:
 - [x] Default worker thread count to one fewer than
       `std.Thread.getCpuCount()` when possible, reserving the main/render thread
       as an additional batch participant; allow config override for worker
-      thread count, stack size, minimum parallel item count, and grain size.
+      thread count, stack size, minimum parallel item count, and items per
+      claimed range (`items_per_range`).
 - [x] Use preallocated worker records, one synchronous batch descriptor, and an
       atomic range cursor. No frame-batch submission may allocate after
       initialization.
@@ -405,8 +432,9 @@ Acceptance checks:
 - [ ] Serial and parallel render prep produce identical vertex order, draw
       group order, layer ordering, and invalid-texture skipping for the same
       command input.
-- [x] Existing visible rendering remains swapchain/vsync paced, and
-      hidden/minimized/no-swapchain fallback pacing remains unchanged.
+- [x] Existing visible rendering remains swapchain/vsync paced, hidden/minimized
+      fallback pacing remains unchanged, and visible no-swapchain results block
+      gameplay before the next update.
 - [x] `zig build test`, `zig build check`, and `zig build verify` pass before
       the slice is considered complete.
 
@@ -562,8 +590,8 @@ Current foundation:
 - `DataSystem` provides persistent 64-byte-aligned movement SoA slices for
   systems to process.
 - `src/core/simd.zig` provides portable vector helpers.
-- `MovementSystem` integrates movement-body SoA columns through a serial path or
-  `ThreadSystem.parallelForWithOptions`.
+- `MovementSystem` integrates explicit movement-body SoA slices through a serial
+  path or `ThreadSystem.parallelForWithOptions`.
 - `ParticleSystem` owns a state-local fixed-capacity transient SoA pool and
   updates particle rows through a serial path or
   `ThreadSystem.parallelForWithOptions`.
@@ -580,10 +608,12 @@ Performance notes:
   small counts, tests, and fallback behavior, but the processor API and tests
   must prove that systems can split `DataSystem` slices through
   `ThreadSystem.parallelFor`.
-- Treat the current adaptive thread-system thresholds as a starting heuristic,
-  not a tuned policy. The first real processor should record whether selected
-  worker counts, range sizes, main-thread wait time, and worker utilization are
-  sensible under representative movement workloads before broadening the policy.
+- Treat adaptive work tuning as a measured batch-profile policy, not a separate
+  worker-count heuristic. The tuner starts inline, probes threaded profiles only
+  when measured batch time justifies it, then searches aligned range sizes
+  around the best measured threaded profile before settling. Benchmark output
+  should keep reporting worker count, range size, main-thread wait time, and
+  worker utilization so regressions are visible.
 - Treat cache-line behavior as part of the processor contract. SoA columns used
   by SIMD processors should have an explicit alignment policy before relying on
   wider loads or target-specific vector behavior.
@@ -599,12 +629,12 @@ Performance notes:
 
 System shape:
 
-- `MovementSystem` reads and writes the movement-body SoA slices in
-  `DataSystem`, keeps a simple serial path for small counts and tests, and uses
-  threaded SIMD ranges for larger batches.
+- `MovementSystem` reads and writes explicit movement-body SoA slices, keeps a
+  simple serial path for small counts and tests, and uses threaded SIMD ranges
+  for larger batches.
 - `MovementSystem` must not create, destroy, add, or remove entities/components
-  inside worker ranges. Any structural change needed by future systems should be
-  deferred to a later command-buffer design.
+  inside worker ranges. Structural changes from future processors should flow
+  through the state-owned simulation frame and `DataSystem` batch commit path.
 - `ParticleSystem` is a state-owned transient effect system rather than a
   `DataSystem` entity processor. It keeps emission and expired row swap-removal
   on the main thread, while worker ranges only mutate assigned particle rows.
@@ -613,9 +643,9 @@ System shape:
 
 Checklist:
 
-- [x] Define ECS systems as data processors that accept `DataSystem`,
-      `ThreadSystem`, and fixed-step delta time; document `ParticleSystem` as
-      the state-owned transient effect exception.
+- [x] Define ECS systems as data processors that accept typed `DataSystem`
+      slices/views, `ThreadSystem`, and fixed-step delta time; document
+      `ParticleSystem` as the state-owned transient effect exception.
 - [x] Add a movement processor that splits dense SoA slices through
       `parallelFor`.
 - [x] Add particle processors that split dense SoA slices through `parallelFor`.
@@ -652,20 +682,20 @@ Acceptance checks:
       completed output from earlier systems.
 
 Movement and particle passes landed: the demo maps player input to movement
-velocity, runs `MovementSystem` once over all movement bodies, applies
-player-only bounds clamping, emits a small particle trail, updates particles,
-and renders transient particle rectangles. A few colored moving squares remain
-as non-player movement processor coverage. Parallel render prep remains open
-under Slice 7, while simulation contracts, collision, AI, pathfinding, and rule
-processing are covered by Slices 12-14.
+velocity, exposes a movement-body slice to `MovementSystem`, applies player-only
+bounds clamping, emits a small particle trail, updates particles, and renders
+transient particle rectangles. A few colored moving squares remain as non-player
+movement processor coverage. Parallel render prep remains open under Slice 7,
+while simulation contracts, collision, AI, pathfinding, and rule processing are
+covered by Slices 12-14.
 
 ## Slice 12: Simulation Contracts And Deferred Structural Changes
 
-Goal: define deterministic simulation phase contracts before broad gameplay
-systems start creating entities, emitting events, or requesting structural
-changes from worker jobs.
+Goal: define deterministic, efficient simulation phase contracts before broad
+gameplay systems start creating entities, emitting events, or requesting
+structural changes from worker jobs.
 
-Current foundation:
+Implemented foundation:
 
 - `main.zig` -> `Engine` -> `StateStack` is the existing runtime dispatch path
   for events, fixed updates, and rendering.
@@ -674,37 +704,69 @@ Current foundation:
   services.
 - `ThreadSystem` runs synchronous range batches that complete before the next
   system consumes their output.
-- Movement and particle processors prove serial and threaded fixed-step updates
-  over dense SoA slices.
+- `ParallelRange.index` gives inline and threaded jobs stable range-order
+  identity independent of worker scheduling.
+- `SimulationFrame` is state-owned transient per-step data with typed event,
+  intent, and deferred structural command streams.
+- `RangeOutputStream(T)` implements count/prefix/write output collection and
+  deterministic range-index merge.
+- `DataSystem.applyStructuralCommands` applies deferred entity/component changes
+  at explicit main-thread commit points.
+- `GameDemoState` owns a `SimulationFrame`, clears it each fixed step, runs
+  processor phases, and applies deferred structural commands before the step
+  finishes.
+- `MovementSystem` now consumes explicit movement-body slices rather than broad
+  structural `DataSystem` access.
 
 Architecture notes:
 
 - Structural entity/component changes, state transitions, SDL/GPU calls, asset
   loading, save/load streaming, and renderer ownership must remain behind an
   explicit main-thread or deferred boundary.
-- Transient simulation events and intents should be typed, bounded, ordered
-  data, not callback chains or hot-path hash-map dispatch.
-- Designs should make fixed-step processor order, conflict resolution, and
-  merge points explicit before adding systems that can interact emergently.
+- Determinism, performance, and efficiency are one contract: output order must
+  come from stable input/range order, not worker timing or worker IDs; high-volume
+  outputs must use typed range-owned buffers instead of global per-command append,
+  callback chains, or hot-path hash maps; warmed paths must avoid allocation.
+- Threaded output collection should use a count/prefix/write pipeline:
+  count outputs per range, prefix offsets on the main thread, write contiguous
+  output by range, merge by range index, then consume the typed batch.
+- Structural mutation remains behind `DataSystem` batch commit boundaries.
+  Event and intent streams use the same typed range-output model, but remain
+  transient simulation data rather than persistent `DataSystem` state.
+- Designs should make fixed-step processor order, input order, output owner,
+  merge order, allocation policy, conflict resolution, and structural apply
+  points explicit before adding systems that can interact emergently.
 
 Checklist:
 
-- [ ] Define the fixed-step simulation phase order for gameplay processors,
+- [x] Define the fixed-step simulation phase order for gameplay processors,
       transient events, deferred structural commands, and save/load hooks.
-- [ ] Add a state-owned event/intent/deferred-command path with deterministic
-      append and merge behavior.
-- [ ] Add tests that worker-produced outputs merge in stable order and cannot
-      mutate `DataSystem` structure from worker ranges.
-- [ ] Document what belongs in persistent `DataSystem` state versus transient
+- [x] Add stable `ParallelRange.index` support so output order can be tied to
+      deterministic range order rather than worker scheduling.
+- [x] Add a state-owned simulation frame with typed event, intent, and deferred
+      structural command streams.
+- [x] Add range-owned output collection for high-volume streams using
+      count/prefix/write and deterministic range-index merge.
+- [x] Add `DataSystem` batch commit boundaries for deferred structural changes;
+      do not expose per-command structural mutation as the simulation output API.
+- [x] Refactor `MovementSystem` so the processor path receives typed slices
+      rather than broad structural `DataSystem` access.
+- [x] Add tests that worker-produced outputs merge in stable order.
+- [x] Refactor typed processor APIs so hot processor paths avoid broad
+      structural `DataSystem` access.
+- [x] Document what belongs in persistent `DataSystem` state versus transient
       per-frame simulation data.
 
 Acceptance checks:
 
-- [ ] Deferred entity/component changes apply only after the producing processor
+- [x] Deferred entity/component changes apply only after the producing processor
       completes.
-- [ ] Replaying the same initial data and inputs produces the same event,
-      command, and processor output order.
-- [ ] Save/load boundaries exclude transient frame events, scratch buffers,
+- [x] Replaying the same initial data and inputs produces the same event,
+      command, and processor output order, independent of worker timing.
+- [x] High-volume output paths use preallocated typed arrays, slices, range-owned
+      buffers, and deterministic batch commit instead of global per-command
+      atomics, broad event buses, or hot-path hash-map dispatch.
+- [x] Save/load boundaries exclude transient frame events, scratch buffers,
       renderer resources, app services, and thread-system state.
 
 ## Slice 13: Spatial Queries And Collision Contacts
@@ -716,38 +778,58 @@ dispatch.
 Current foundation:
 
 - `DataSystem` has entity IDs, component masks, movement bodies, primitive
-  visual intent, and aligned movement SoA columns.
+  visual intent, dedicated collision bounds, and aligned movement SoA columns.
 - `MovementSystem` updates positions deterministically before later processors
   read them.
-- Slice 12 will provide the event/deferred-command boundary needed for collision
+- Slice 12 provides the event/deferred-command boundary needed for collision
   outcomes that create, remove, or change entities.
 
 Architecture notes:
 
-- Spatial query data should be built from dense slices and stable entity IDs.
-- Collision detection should produce deterministic contact/query output before
-  response processors consume it.
-- Collision response should be separate from broadphase/narrowphase detection so
-  gameplay rules can choose how to react to contacts.
+- `CollisionSystem` owns warmed transient AABB proxy scratch, not persistent
+  gameplay data.
+- The first broadphase is sweep-and-prune over entities with both movement bodies
+  and collision bounds.
+- Contact output uses the Slice 12 count/prefix/write stream pattern so threaded
+  range windows merge deterministically.
+- Collision response stays separate from detection; `CollisionResponseSystem`
+  consumes the completed same-step contact stream through explicit
+  response-policy components before structural commands commit.
 
 Checklist:
 
-- [ ] Add persistent collision-shape or bounds data in `DataSystem` only for
+- [x] Add persistent collision-shape or bounds data in `DataSystem` only for
       world objects that need collision or spatial queries.
-- [ ] Add a deterministic broadphase/spatial-query structure appropriate for the
+- [x] Add a deterministic broadphase/spatial-query structure appropriate for the
       current 2D scale.
-- [ ] Add a contact output buffer and response processor boundary.
-- [ ] Add tests for stable contact ordering, stale entity rejection, and serial
+- [x] Add a contact output buffer and response processor boundary.
+- [x] Add tests for stable contact ordering, stale entity rejection, and serial
       versus threaded query behavior where threading is used.
+- [x] Add non-interactive collision benchmarks with quick-profile dense/sparse
+      regression coverage, heavier 10k-50k standard-profile sweeps, and
+      candidate/contact counters.
 
 Acceptance checks:
 
-- [ ] Collision queries operate from typed SoA data and stable IDs, not object
+- [x] Collision queries operate from typed SoA data and stable IDs, not object
       callbacks.
-- [ ] Contact generation is deterministic for the same initial data and fixed
+- [x] Contact generation is deterministic for the same initial data and fixed
       update step.
-- [ ] Collision response cannot perform unsafe structural mutation inside worker
+- [x] Collision response cannot perform unsafe structural mutation inside worker
       ranges.
+
+Slice 13 landed as a high-throughput collision-contact foundation. The collision
+processor builds 64-byte-aligned AABB proxies from movement and collision bounds,
+maintains warm sorted order, partitions sweep-and-prune work into deterministic
+range windows, and emits transient contacts through `SimulationFrame`. The
+response processor consumes the completed same-step contact stream through
+`collision_response` components, keeps trigger output in a typed transient
+stream, computes correction columns with `src/core/simd.zig`, and applies sparse
+movement writes in deterministic contact order before structural commands
+commit. The demo uses the same generic response path for player-obstacle,
+moving-square-obstacle, and player-moving-square contacts. Detector benchmarks
+report candidate pairs and contacts for dense/sparse body workloads, while
+response benchmarks report triggers and intents across 1k-50k contact workloads.
 
 ## Slice 14: AI, Pathfinding, And Emergent Rule Processing
 
@@ -759,12 +841,16 @@ Current foundation:
 
 - `DataSystem` and component masks can identify entity membership for processors.
 - Movement and particle processors demonstrate the system API shape.
-- Slice 12 should provide deterministic event/intent/deferred-command contracts.
+- Slice 12 provides deterministic event/intent/deferred-command contracts.
 - Slice 13 should provide spatial query and contact data for perception and
   collision-aware decisions.
 
 Architecture notes:
 
+- Domain controllers should orchestrate feature phases and budgets, not become
+  hidden per-entity stores. They may take typed `DataSystem` views and run small
+  policy passes, but hot or reusable loops should remain systems/processors over
+  SoA slices.
 - AI and rules should usually emit movement intents, steering outputs, target
   choices, path requests/results, or deferred commands rather than mutating
   unrelated stores directly.
@@ -793,6 +879,46 @@ Acceptance checks:
 - [ ] Processor outputs compose through typed data, intents, or deferred commands
       with explicit ownership and lifetime.
 
+## Slice 15: SDL3_mixer Audio Service
+
+Goal: add app-owned SFX and music support so gameplay states can request
+immersive audio without owning SDL_mixer resources or moving audio calls into
+threaded processors.
+
+Current foundation:
+
+- SDL3_mixer is a required system dependency beside SDL3 and SDL3_ttf.
+- `AudioService` owns SDL_mixer initialization, the mixer device, reusable SFX
+  tracks, one music track, loaded audio assets, failed-load memoization, bus
+  gains, and pause ducking.
+- `AudioCommandBuffer` carries state-owned audio intent through `UpdateContext`.
+  States queue copied, traversal-safe relative paths during fixed-step updates;
+  `Engine` drains commands on the main thread after state updates and transition
+  application.
+- The demo starts looping music once, updates the listener from the player, and
+  emits debounced positional collision SFX from completed contact streams.
+
+Checklist:
+
+- [x] Link SDL3_mixer and include its C API through the platform SDL import.
+- [x] Add audio config validation for track count, command cap, gains, and
+      spatial scale.
+- [x] Add an app-owned audio service and fixed-step command buffer.
+- [x] Pass audio intent through `UpdateContext` without putting SDL_mixer handles
+      in gameplay state or `DataSystem`.
+- [x] Add demo music and collision SFX assets under `assets/audio/`.
+- [x] Add tests for command validation, command caps, load caching, failed-load
+      memoization, music idempotence, pause ducking, and spatial positioning.
+- [x] Update architecture, setup, workflow, and repository guidance docs.
+
+Acceptance checks:
+
+- [x] Gameplay states can request SFX and music without owning mixer handles.
+- [x] Audio commands are bounded per fixed step and drained on the main thread.
+- [x] Pause stops active SFX and ducks/resumes music gain.
+- [x] Missing audio assets warn once per path instead of retrying every frame.
+- [x] The demo proves music plus collision SFX through installed runtime assets.
+
 ## Suggested Order
 
 0. Runtime diagnostics policy.
@@ -810,6 +936,7 @@ Acceptance checks:
 12. Simulation contracts and deferred structural changes.
 13. Spatial queries and collision contacts.
 14. AI, pathfinding, and emergent rule processing.
+15. SDL3_mixer audio service.
 
 This order keeps gameplay/menu correctness ahead of larger renderer work, then
 builds resource ownership before text/UI, renderer composition, and parallel
@@ -817,4 +944,6 @@ render preparation depend on it. SIMD helpers land before the DataSystem and
 processor slices so the storage and system APIs can be designed around the hot
 loop shape from the start. The new gameplay-system slices keep structural
 changes, spatial contacts, and AI/rule outputs ordered and testable before
-emergent behavior becomes broad.
+emergent behavior becomes broad. The audio slice lands as an app-service track
+because it depends on asset ownership, state contexts, and pause policy rather
+than on gameplay-data storage.

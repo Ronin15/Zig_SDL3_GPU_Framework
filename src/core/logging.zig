@@ -15,6 +15,7 @@ pub fn enabled(comptime level: std.log.Level) bool {
 
 pub const app = std.log.scoped(.app);
 pub const assets = std.log.scoped(.assets);
+pub const audio = std.log.scoped(.audio);
 pub const core = std.log.scoped(.core);
 pub const game = std.log.scoped(.game);
 pub const render = std.log.scoped(.render);

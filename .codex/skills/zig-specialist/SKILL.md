@@ -43,12 +43,14 @@ If a change appears to belong in multiple layers, keep SDL/window/GPU ownership 
 1. Inspect the existing owner file and adjacent tests before editing.
 2. Identify whether the task is app flow, rendering, game behavior, platform integration, assets, or shared primitives.
 3. Make the smallest coherent change in the owning layer.
-4. Keep raw input mapped to named actions; keep latched frame commands separate from held gameplay input.
-5. Let state-stack policies decide whether lower states receive update, input, or render passes.
-6. Preserve fixed-step simulation with varying-refresh rendering; do not add a blanket 60 FPS render cap.
-7. Pair SDL resource creation with cleanup close to the creation site.
-8. Add scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Keep hot-path debug logging minimal and deliberate, keep `warn`/`err` rare and actionable, and keep pure helpers log-free.
-9. Add behavior-focused Zig tests when logic can be tested without opening a window.
+4. Keep Zig imports and names idiomatic: use `const std = @import("std");`, import project declarations directly when that keeps call sites clear, avoid `_mod` suffixes, avoid `const Type = file.Type` bridge aliases, and avoid double names such as `thread.ThreadSystem`.
+5. Use a concise lowerCamelCase file namespace only when the call site is clearer as a function or namespace lookup, such as `assets.validateRelativePath(...)`; do not rewrite SDL/C symbols, generated build-option names, or `std.Build` field names.
+6. Keep raw input mapped to named actions; keep latched frame commands separate from held gameplay input.
+7. Let state-stack policies decide whether lower states receive update, input, or render passes.
+8. Preserve fixed-step simulation with varying-refresh rendering; do not add a blanket 60 FPS render cap.
+9. Pair SDL resource creation with cleanup close to the creation site.
+10. Add scoped `std.log` diagnostics for useful lifecycle, configuration, fallback, and failure context. Keep hot-path debug logging minimal and deliberate, keep `warn`/`err` rare and actionable, and keep pure helpers log-free.
+11. Add behavior-focused Zig tests when logic can be tested without opening a window.
 
 ## Performance Rules
 

@@ -3,11 +3,13 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
+const AudioCommandBuffer = @import("audio.zig").AudioCommandBuffer;
 const FrameCommands = @import("input.zig").FrameCommands;
 const InputState = @import("input.zig").InputState;
 const AssetCache = @import("../assets/cache.zig").AssetCache;
-const input_router = @import("input_router.zig");
-const InputRoutingPolicy = input_router.InputRoutingPolicy;
+const TextureLease = @import("../assets/cache.zig").TextureLease;
+const inputRouter = @import("input_router.zig");
+const InputRoutingPolicy = @import("input_router.zig").InputRoutingPolicy;
 const Renderer = @import("../render/renderer.zig").Renderer;
 const TextService = @import("../render/text.zig").TextService;
 const ThreadSystem = @import("thread_system.zig").ThreadSystem;
@@ -50,6 +52,7 @@ pub const TransitionApplyResult = struct {
 
 pub const UpdateContext = struct {
     input: *const InputState,
+    audio: *AudioCommandBuffer,
     delta_seconds: f32,
     transitions: *StateTransitions,
     thread_system: *ThreadSystem,
@@ -61,6 +64,10 @@ pub const RenderContext = struct {
     text_service: ?*TextService,
     interpolation_alpha: f32,
     thread_system: *ThreadSystem,
+
+    pub fn acquireTexture(self: RenderContext, relative_path: []const u8) !TextureLease {
+        return self.asset_cache.acquireTexture(self.renderer, relative_path);
+    }
 };
 
 pub const State = struct {
@@ -72,6 +79,7 @@ pub const State = struct {
         update: *const fn (*anyopaque, UpdateContext) anyerror!void,
         render: *const fn (*anyopaque, RenderContext) anyerror!void,
         on_pause: *const fn (*anyopaque) void,
+        on_resume: *const fn (*anyopaque) void,
         destroy: *const fn (*anyopaque, std.mem.Allocator) void,
     };
 
@@ -103,6 +111,13 @@ pub const State = struct {
                 self.onPause();
             }
 
+            fn adapterOnResume(state_ptr: *anyopaque) void {
+                const self: *T = @ptrCast(@alignCast(state_ptr));
+                if (@hasDecl(T, "onResume")) {
+                    self.onResume();
+                }
+            }
+
             fn adapterDestroy(state_ptr: *anyopaque, allocator: std.mem.Allocator) void {
                 const self: *T = @ptrCast(@alignCast(state_ptr));
                 self.deinit();
@@ -114,6 +129,7 @@ pub const State = struct {
                 .update = adapterUpdate,
                 .render = adapterRender,
                 .on_pause = adapterOnPause,
+                .on_resume = adapterOnResume,
                 .destroy = adapterDestroy,
             };
         };
@@ -138,6 +154,10 @@ pub const State = struct {
 
     pub fn onPause(self: State) void {
         self.vtable.on_pause(self.ptr);
+    }
+
+    pub fn onResume(self: State) void {
+        self.vtable.on_resume(self.ptr);
     }
 
     pub fn destroy(self: State, allocator: std.mem.Allocator) void {
@@ -340,6 +360,12 @@ pub const StateStack = struct {
         }
     }
 
+    pub fn resumeActive(self: *StateStack) void {
+        if (self.active()) |state| {
+            state.onResume();
+        }
+    }
+
     pub fn handleEvent(self: *StateStack, event: *const c.SDL_Event, transitions: *StateTransitions) !void {
         var index = self.states.items.len;
         while (index > 0) {
@@ -451,12 +477,14 @@ fn initTestThreadSystem() !ThreadSystem {
 
 fn testUpdateContext(
     input: *const InputState,
+    audio: *AudioCommandBuffer,
     delta_seconds: f32,
     transitions: *StateTransitions,
     thread_system: *ThreadSystem,
 ) UpdateContext {
     return .{
         .input = input,
+        .audio = audio,
         .delta_seconds = delta_seconds,
         .transitions = transitions,
         .thread_system = thread_system,
@@ -713,18 +741,20 @@ test "modal state blocks updates below and pass-through state allows them" {
     defer transitions.deinit();
     var threads = try initTestThreadSystem();
     defer threads.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
     var stack = StateStack.init(std.testing.allocator);
     defer stack.deinit();
 
     _ = try stack.replaceGameplay(TestingState, .{ .update_count = &bottom_updates });
     const modal_handle = try stack.pushModal(TestingState, .{ .update_count = &top_updates });
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
     try std.testing.expectEqual(@as(u32, 0), bottom_updates);
     try std.testing.expectEqual(@as(u32, 1), top_updates);
 
     try std.testing.expect(stack.remove(modal_handle));
     _ = try stack.pushOverlay(TestingState, .{ .update_count = &top_updates });
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
     try std.testing.expectEqual(@as(u32, 1), bottom_updates);
     try std.testing.expectEqual(@as(u32, 2), top_updates);
 }
@@ -883,13 +913,13 @@ test "state stack input routing follows active state policy" {
     var input = InputState{};
     var commands = FrameCommands{};
     var move_down = testKeyEvent(c.SDL_EVENT_KEY_DOWN, c.SDLK_A, false);
-    input_router.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
+    inputRouter.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
     try std.testing.expect(!input.isHeld(.moveLeft));
 
     try std.testing.expect(stack.remove(modal_handle));
     try std.testing.expect(stack.inputRoutingPolicy().allowsAction(.moveLeft));
     try std.testing.expect(stack.inputRoutingPolicy().allowsContext(.ui));
-    input_router.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
+    inputRouter.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
     try std.testing.expect(input.isHeld(.moveLeft));
 
     _ = try stack.pushOpaque(TestingState, .{});
@@ -1044,11 +1074,13 @@ test "queued transition from update waits until applyTransitions" {
     defer transitions.deinit();
     var threads = try initTestThreadSystem();
     defer threads.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
     var stack = StateStack.init(std.testing.allocator);
     defer stack.deinit();
 
     _ = try stack.replaceGameplay(QueuingState, .{});
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
 
     try std.testing.expectEqual(@as(usize, 1), stack.len());
     try std.testing.expectEqual(@as(usize, 1), transitions.requests.items.len);

@@ -3,6 +3,8 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
+const AudioCommandBuffer = @import("audio.zig").AudioCommandBuffer;
+const AudioService = @import("audio.zig").AudioService;
 const AssetCache = @import("../assets/cache.zig").AssetCache;
 const AssetStore = @import("../assets/assets.zig").AssetStore;
 const build_options = @import("build_options");
@@ -10,23 +12,21 @@ const config = @import("../config.zig");
 const DebugOverlay = if (build_options.debug_overlay) @import("../render/debug_overlay.zig").DebugOverlay else @import("../render/debug_overlay_stub.zig").DebugOverlay;
 const GameDemoState = @import("../game/game_demo_state.zig").GameDemoState;
 const frame_pacer = @import("frame_pacer.zig");
-const input_mod = @import("input.zig");
 const input_router = @import("input_router.zig");
 const log = @import("../core/logging.zig").app;
-const Action = input_mod.Action;
-const FrameCommands = input_mod.FrameCommands;
-const InputState = input_mod.InputState;
+const Action = @import("input.zig").Action;
+const FrameCommands = @import("input.zig").FrameCommands;
+const InputState = @import("input.zig").InputState;
 const PauseController = @import("pause_controller.zig").PauseController;
 const PauseState = @import("../game/pause_state.zig").PauseState;
 const Renderer = @import("../render/renderer.zig").Renderer;
 const resolution = @import("resolution.zig");
-const state_mod = @import("state.zig");
-const RenderContext = state_mod.RenderContext;
-const State = state_mod.State;
-const StateStack = state_mod.StateStack;
-const StateTransitions = state_mod.StateTransitions;
+const RenderContext = @import("state.zig").RenderContext;
+const State = @import("state.zig").State;
+const StateStack = @import("state.zig").StateStack;
+const StateTransitions = @import("state.zig").StateTransitions;
 const TextService = @import("../render/text.zig").TextService;
-const UpdateContext = state_mod.UpdateContext;
+const UpdateContext = @import("state.zig").UpdateContext;
 const ThreadSystem = @import("thread_system.zig").ThreadSystem;
 const TimeLoop = @import("time_loop.zig").TimeLoop;
 const sdl = @import("../platform/sdl.zig");
@@ -38,6 +38,8 @@ pub const Engine = struct {
     sdl_context: sdl.SdlContext,
     window: sdl.Window,
     assets: AssetStore,
+    audio_service: AudioService,
+    audio_commands: AudioCommandBuffer,
     renderer: Renderer,
     asset_cache: AssetCache,
     text_service: TextService,
@@ -49,6 +51,7 @@ pub const Engine = struct {
     input: InputState = .{},
     commands: FrameCommands = .{},
     running: bool = true,
+    swapchain_blocked: bool = false,
 
     pub fn init(process_init: std.process.Init, app_config: config.AppConfig) !Engine {
         validateConfig(app_config) catch |err| {
@@ -60,7 +63,8 @@ pub const Engine = struct {
         const window_title = try allocator.dupeZ(u8, app_config.window_title);
         defer allocator.free(window_title);
 
-        var sdl_context = try sdl.SdlContext.init(c.SDL_INIT_VIDEO);
+        const sdl_flags = c.SDL_INIT_VIDEO | if (app_config.audio.enabled) c.SDL_INIT_AUDIO else 0;
+        var sdl_context = try sdl.SdlContext.init(sdl_flags);
         errdefer sdl_context.deinit();
 
         const logical_size = app_config.resolution_policy.logical_size;
@@ -76,6 +80,11 @@ pub const Engine = struct {
         }
 
         const assets = AssetStore.init(allocator, process_init.io, app_config.asset_root);
+        var audio_service = try AudioService.init(allocator, assets, app_config.audio);
+        errdefer audio_service.deinit();
+        var audio_commands = AudioCommandBuffer.init(allocator, app_config.audio.max_commands_per_step);
+        errdefer audio_commands.deinit();
+
         var renderer = try Renderer.init(allocator, window.handle, assets, app_config);
         errdefer renderer.deinit();
         var asset_cache = AssetCache.init(allocator, assets);
@@ -98,7 +107,7 @@ pub const Engine = struct {
         errdefer thread_system.deinit();
 
         log.debug(
-            "engine initialized: app=\"{s}\" logical={}x{} scale_mode={s} asset_root=\"{s}\" resizable={} high_pixel_density={} gpu_debug={} debug_overlay={} worker_threads={}",
+            "engine initialized: app=\"{s}\" logical={}x{} scale_mode={s} asset_root=\"{s}\" resizable={} high_pixel_density={} gpu_debug={} debug_overlay={} audio_enabled={} worker_threads={}",
             .{
                 app_config.app_name,
                 logical_size.width,
@@ -109,6 +118,7 @@ pub const Engine = struct {
                 app_config.high_pixel_density,
                 app_config.gpu_debug,
                 build_options.debug_overlay,
+                app_config.audio.enabled,
                 thread_system.workerThreadCount(),
             },
         );
@@ -119,6 +129,8 @@ pub const Engine = struct {
             .sdl_context = sdl_context,
             .window = window,
             .assets = assets,
+            .audio_service = audio_service,
+            .audio_commands = audio_commands,
             .renderer = renderer,
             .asset_cache = asset_cache,
             .text_service = text_service,
@@ -141,6 +153,8 @@ pub const Engine = struct {
         self.text_service.deinit(&self.renderer);
         self.asset_cache.deinit(&self.renderer);
         self.renderer.deinit();
+        self.audio_commands.deinit();
+        self.audio_service.deinit();
         self.window.deinit();
         self.sdl_context.deinit();
     }
@@ -183,7 +197,9 @@ pub const Engine = struct {
     }
 
     pub fn framePolicy(self: *const Engine) frame_pacer.FramePolicy {
-        return frame_pacer.windowFramePolicy(self.window.handle);
+        const policy = frame_pacer.windowFramePolicy(self.window.handle);
+        if (self.swapchain_blocked) return frame_pacer.gameplayBlockedPolicy(policy);
+        return policy;
     }
 
     pub fn applyFrameControls(
@@ -191,6 +207,7 @@ pub const Engine = struct {
         frame_policy: frame_pacer.FramePolicy,
         time_loop: *TimeLoop,
     ) !void {
+        const was_paused = self.pause.isPaused();
         if (frame_policy.should_pause_gameplay and !self.pause.isPaused()) {
             log.debug("pausing gameplay while window cannot render", .{});
         }
@@ -202,18 +219,25 @@ pub const Engine = struct {
             self.pause.exit(&self.states, &self.input, time_loop, self.nowNs());
         } else if (!frame_policy.should_pause_gameplay and !self.pause.isPaused() and self.commands.wasPressed(Action.pause)) {
             log.debug("pausing gameplay by input command", .{});
-            try self.pause.enter(&self.states, &self.input, time_loop, self.nowNs());
+            try self.pause.enterUser(&self.states, &self.input, time_loop, self.nowNs());
+        }
+        const is_paused = self.pause.isPaused();
+        if (was_paused != is_paused) {
+            self.audio_service.setPaused(is_paused);
         }
     }
 
     pub fn update(self: *Engine, delta_seconds: f32) !void {
+        self.audio_commands.beginStep();
         try self.states.update(UpdateContext{
             .input = &self.input,
+            .audio = &self.audio_commands,
             .delta_seconds = delta_seconds,
             .transitions = &self.transitions,
             .thread_system = &self.thread_system,
         });
         try self.applyTransitions();
+        self.audio_service.drain(&self.audio_commands);
     }
 
     pub fn renderFrame(
@@ -233,10 +257,15 @@ pub const Engine = struct {
                 .interpolation_alpha = interpolation_alpha,
                 .thread_system = &self.thread_system,
             });
+            try self.debug_overlay.prepareForRender(&self.text_service, &self.renderer);
             try self.debug_overlay.render(&self.renderer);
             switch (try self.renderer.endFrame()) {
                 .submitted => {
-                    try self.debug_overlay.recordSubmittedFrame(&self.text_service, &self.renderer, frame_delta_ns);
+                    if (self.swapchain_blocked) {
+                        log.debug("swapchain available again; clearing render-blocked gameplay pause", .{});
+                    }
+                    self.swapchain_blocked = false;
+                    self.debug_overlay.recordSubmittedFrame(frame_delta_ns);
                     if (frame_policy.target_frame_ns) |target_frame_ns| {
                         frame_pacer.paceTargetFrame(frame_start_ns, target_frame_ns);
                     }
@@ -245,11 +274,13 @@ pub const Engine = struct {
                     if (!self.pause.isPaused()) {
                         log.debug("swapchain unavailable; pausing gameplay and using fallback pacing", .{});
                     }
-                    try self.pause.enter(&self.states, &self.input, time_loop, self.nowNs());
+                    self.swapchain_blocked = true;
+                    try self.pause.enterPolicy(&self.states, &self.input, time_loop, self.nowNs());
                     frame_pacer.paceFallbackFrame(frame_start_ns);
                 },
             }
         } else {
+            self.swapchain_blocked = false;
             frame_pacer.paceFallbackFrame(frame_start_ns);
         }
     }
@@ -267,6 +298,7 @@ pub const Engine = struct {
             log.debug("quit requested by state transition", .{});
             self.running = false;
         }
+        self.audio_service.setPaused(self.pause.isPaused());
     }
 };
 
@@ -283,6 +315,18 @@ fn logInvalidConfig(app_config: config.AppConfig, err: anyerror) void {
         error.InvalidConfig => log.err(
             "frames_in_flight must be between 1 and 3, got {}",
             .{app_config.frames_in_flight},
+        ),
+        error.InvalidAudioConfig => log.err(
+            "invalid audio config: tracks={} commands={} master_gain={} sfx_gain={} music_gain={} paused_music_gain={} spatial_units_per_meter={}",
+            .{
+                app_config.audio.max_sfx_tracks,
+                app_config.audio.max_commands_per_step,
+                app_config.audio.master_gain,
+                app_config.audio.sfx_gain,
+                app_config.audio.music_gain,
+                app_config.audio.paused_music_gain,
+                app_config.audio.spatial_units_per_meter,
+            },
         ),
         else => {},
     }

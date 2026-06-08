@@ -5,10 +5,10 @@
 //! Allocation-free input routing for gameplay, UI, app command, and debug contexts.
 
 const std = @import("std");
-const input_mod = @import("input.zig");
-const Action = input_mod.Action;
-const FrameCommands = input_mod.FrameCommands;
-const InputState = input_mod.InputState;
+const inputFile = @import("input.zig");
+const Action = @import("input.zig").Action;
+const FrameCommands = @import("input.zig").FrameCommands;
+const InputState = @import("input.zig").InputState;
 const c = @import("../platform/sdl.zig").c;
 
 pub const InputContext = enum(usize) {
@@ -63,7 +63,7 @@ pub const InputRoutingPolicy = struct {
 pub fn routeEvent(policy: InputRoutingPolicy, event: *const c.SDL_Event, input: *InputState, commands: *FrameCommands) void {
     switch (event.type) {
         c.SDL_EVENT_KEY_DOWN, c.SDL_EVENT_KEY_UP => {
-            const action = input_mod.actionForKey(event.key.key) orelse return;
+            const action = inputFile.actionForKey(event.key.key) orelse return;
             if (!policy.allowsAction(action)) return;
             if (isGameplayAction(action)) {
                 input.handleEvent(event);

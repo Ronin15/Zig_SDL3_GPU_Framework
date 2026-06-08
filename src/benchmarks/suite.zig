@@ -3,9 +3,11 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const thread_mod = @import("../app/thread_system.zig");
-const BatchStats = thread_mod.BatchStats;
-const ThreadSystemConfig = thread_mod.ThreadSystemConfig;
+const AdaptiveWorkPhase = @import("../app/thread_system.zig").AdaptiveWorkPhase;
+const AdaptiveWorkReport = @import("../app/thread_system.zig").AdaptiveWorkReport;
+const AdaptiveWorkTunerConfig = @import("../app/thread_system.zig").AdaptiveWorkTunerConfig;
+const BatchStats = @import("../app/thread_system.zig").BatchStats;
+const ThreadSystemConfig = @import("../app/thread_system.zig").ThreadSystemConfig;
 
 pub const default_items_per_range = (ThreadSystemConfig{}).items_per_range;
 
@@ -171,7 +173,7 @@ pub const BatchSummary = struct {
 };
 
 pub const WorkTuningSummary = struct {
-    phase: thread_mod.AdaptiveWorkPhase = .learning,
+    phase: AdaptiveWorkPhase = .learning,
     initial_worker_threads: usize = 0,
     initial_items_per_range: usize = 0,
     final_worker_threads: usize = 0,
@@ -256,7 +258,7 @@ pub const StatsAccumulator = struct {
     }
 };
 
-pub fn workTuningSummary(report: thread_mod.AdaptiveWorkReport) WorkTuningSummary {
+pub fn workTuningSummary(report: AdaptiveWorkReport) WorkTuningSummary {
     return .{
         .phase = report.phase,
         .initial_worker_threads = report.initial_profile.worker_threads,
@@ -280,7 +282,7 @@ pub fn workTuningSummary(report: thread_mod.AdaptiveWorkReport) WorkTuningSummar
 }
 
 pub fn adaptiveSettleIterationLimit(options: Options) usize {
-    const default_tuner_config = thread_mod.AdaptiveWorkTunerConfig{};
+    const default_tuner_config = AdaptiveWorkTunerConfig{};
     const settle_windows: usize = 16;
     const settle_iterations = default_tuner_config.sample_window * settle_windows;
     return @max(options.iterations, settle_iterations);
@@ -921,7 +923,7 @@ test "work tuning summary preserves settled phase" {
     });
     summary.settled_before_measurement = summary.phase == .settled;
 
-    try std.testing.expectEqual(thread_mod.AdaptiveWorkPhase.settled, summary.phase);
+    try std.testing.expectEqual(AdaptiveWorkPhase.settled, summary.phase);
     try std.testing.expect(summary.settled_before_measurement);
     try std.testing.expectEqual(@as(usize, 4), summary.best_worker_threads);
     try std.testing.expectEqual(@as(usize, 256), summary.best_items_per_range);

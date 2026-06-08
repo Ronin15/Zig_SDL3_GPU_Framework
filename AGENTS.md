@@ -106,6 +106,17 @@ formatter will rewrite. Use Zig-style lowerCamelCase for variables and
 functions, `PascalCase` for types, and short descriptive names. Keep error sets
 explicit when practical, as in `error{SdlError}`.
 
+Prefer direct declaration imports for project types and constants when that
+keeps call sites clear, such as `const Engine = @import("app/engine.zig").Engine;`
+or `const ThreadSystem = @import("app/thread_system.zig").ThreadSystem;`. Use a
+concise lowerCamelCase file namespace only when the call site is clearer as a
+function/namespace lookup, such as `inputFile.actionForKey(...)` or
+`assets.validateRelativePath(...)`. Avoid `_mod` suffixes, `const Type =
+file.Type` bridge aliases, and double names such as `thread.ThreadSystem`. Do
+not rewrite SDL/C symbols, generated build-option names, or `std.Build` field
+names. Keep `Renderer` as the render facade for app/game code; do not import
+`src/render/gpu/*` outside the render/platform boundary.
+
 Use Zig `test` blocks and `std.testing`. Put reusable module tests beside the
 code they cover, and name tests by behavior, such as
 `test "player movement clamps to window bounds"`.

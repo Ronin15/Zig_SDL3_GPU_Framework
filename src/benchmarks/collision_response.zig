@@ -3,14 +3,15 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const data_mod = @import("../game/data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
-const response_mod = @import("../game/systems/collision_response.zig");
-const CollisionResponseSystem = response_mod.CollisionResponseSystem;
+const CollisionResponse = @import("../game/data_system.zig").CollisionResponse;
+const DataSystem = @import("../game/data_system.zig").DataSystem;
+const EntityId = @import("../game/data_system.zig").EntityId;
+const movement_range_alignment_items = @import("../game/data_system.zig").movement_range_alignment_items;
+const CollisionResponseStats = @import("../game/systems/collision_response.zig").CollisionResponseStats;
+const CollisionResponseSystem = @import("../game/systems/collision_response.zig").CollisionResponseSystem;
 const simulation = @import("../game/simulation.zig");
-const CollisionContact = simulation.CollisionContact;
-const SimulationFrame = simulation.SimulationFrame;
+const CollisionContact = @import("../game/simulation.zig").CollisionContact;
+const SimulationFrame = @import("../game/simulation.zig").SimulationFrame;
 const suite = @import("suite.zig");
 
 pub const solid_group = suite.BenchmarkGroup{
@@ -104,13 +105,13 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     }
 
     var accumulator = suite.StatsAccumulator.init(item_count);
-    var last_stats = response_mod.CollisionResponseStats{};
+    var last_stats = CollisionResponseStats{};
     for (0..options.iterations) |_| {
         prepareFrameForRun(&fixture, mode);
         const start_ns = suite.nowNs(io);
         last_stats = try system.update(&fixture.data, &fixture.frame);
         const end_ns = suite.nowNs(io);
-        accumulator.record(suite.elapsedNs(start_ns, end_ns), suite.serialBatch(item_count, data_mod.movement_range_alignment_items));
+        accumulator.record(suite.elapsedNs(start_ns, end_ns), suite.serialBatch(item_count, movement_range_alignment_items));
     }
 
     var stats = accumulator.finish();
@@ -119,7 +120,7 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     return stats;
 }
 
-fn runOnce(system: *CollisionResponseSystem, fixture: *Fixture, mode: FixtureMode) !response_mod.CollisionResponseStats {
+fn runOnce(system: *CollisionResponseSystem, fixture: *Fixture, mode: FixtureMode) !CollisionResponseStats {
     prepareFrameForRun(fixture, mode);
     return try system.update(&fixture.data, &fixture.frame);
 }
@@ -181,8 +182,8 @@ fn addContactPair(data: *DataSystem, index: usize, mode: FixtureMode) !ContactPa
 fn addPhysicalPair(
     data: *DataSystem,
     index: usize,
-    a_response: data_mod.CollisionResponse,
-    b_response: data_mod.CollisionResponse,
+    a_response: CollisionResponse,
+    b_response: CollisionResponse,
 ) !ContactPair {
     const base_x: f32 = @floatFromInt((index % 512) * 4);
     const base_y: f32 = @floatFromInt((index / 512) * 4);
@@ -191,7 +192,7 @@ fn addPhysicalPair(
     return .{ .a = a, .b = b };
 }
 
-fn addEntity(data: *DataSystem, position_x: f32, position_y: f32, velocity_x: f32, velocity_y: f32, response: data_mod.CollisionResponse) !EntityId {
+fn addEntity(data: *DataSystem, position_x: f32, position_y: f32, velocity_x: f32, velocity_y: f32, response: CollisionResponse) !EntityId {
     const entity = try data.createEntity();
     try data.setMovementBody(entity, .{
         .position = .{ .x = position_x, .y = position_y },

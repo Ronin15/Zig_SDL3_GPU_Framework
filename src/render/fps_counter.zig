@@ -5,10 +5,10 @@
 const std = @import("std");
 const config = @import("../config.zig");
 const Renderer = @import("renderer.zig").Renderer;
-const text_mod = @import("text.zig");
-const FontId = text_mod.FontId;
-const TextService = text_mod.TextService;
-const TextTextureLease = text_mod.TextTextureLease;
+const textServiceFile = @import("text.zig");
+const FontId = @import("text.zig").FontId;
+const TextService = @import("text.zig").TextService;
+const TextTextureLease = @import("text.zig").TextTextureLease;
 
 const yellow = config.Color{ .r = 1.0, .g = 0.902, .b = 0.157, .a = 1.0 };
 const sample_window_ns = std.time.ns_per_s / 4;
@@ -45,7 +45,7 @@ pub const FpsCounter = struct {
         const font_size_changed = !approxEqAbs(self.active_font_size, target_font_size, font_size_epsilon);
 
         if (font_size_changed) {
-            self.font = try text_service.loadFont(text_mod.defaultFontDesc(target_font_size));
+            self.font = try text_service.loadFont(textServiceFile.defaultFontDesc(target_font_size));
             self.active_font_size = target_font_size;
             self.texture_dirty = true;
         }

@@ -3,11 +3,11 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const thread_mod = @import("../app/thread_system.zig");
-const ThreadSystem = thread_mod.ThreadSystem;
+const BatchStats = @import("../app/thread_system.zig").BatchStats;
+const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
 const math = @import("../core/math.zig");
-const particle_mod = @import("../game/systems/particle.zig");
-const ParticleSystem = particle_mod.ParticleSystem;
+const particle_range_alignment_items = @import("../game/systems/particle.zig").particle_range_alignment_items;
+const ParticleSystem = @import("../game/systems/particle.zig").ParticleSystem;
 const suite = @import("suite.zig");
 
 const delta_seconds: f32 = 1.0 / 60.0;
@@ -104,7 +104,7 @@ pub fn runCase(allocator: std.mem.Allocator, io: std.Io, options: suite.Options,
     return stats;
 }
 
-fn runOnce(particles: *ParticleSystem, thread_system: ?*ThreadSystem, case: suite.BenchmarkCase) thread_mod.BatchStats {
+fn runOnce(particles: *ParticleSystem, thread_system: ?*ThreadSystem, case: suite.BenchmarkCase) BatchStats {
     if (!case.usesThreadSystem()) {
         return particles.updateSerial(delta_seconds).batch;
     }
@@ -119,8 +119,8 @@ fn runOnce(particles: *ParticleSystem, thread_system: ?*ThreadSystem, case: suit
 
 fn benchmarkItemsPerRange(case: suite.BenchmarkCase) ?usize {
     if (case.adaptive) return null;
-    return case.itemsPerRange(particle_mod.particle_range_alignment_items) orelse
-        suite.alignItemCount(suite.default_items_per_range, particle_mod.particle_range_alignment_items);
+    return case.itemsPerRange(particle_range_alignment_items) orelse
+        suite.alignItemCount(suite.default_items_per_range, particle_range_alignment_items);
 }
 
 test "particle benchmark fixture creates requested active particles" {
@@ -142,11 +142,11 @@ test "particle benchmark tiny serial case runs without display" {
 
 test "particle benchmark fixed cases use explicit range controls" {
     try std.testing.expectEqual(
-        suite.alignItemCount(suite.default_items_per_range, particle_mod.particle_range_alignment_items),
+        suite.alignItemCount(suite.default_items_per_range, particle_range_alignment_items),
         benchmarkItemsPerRange(suite.default_cases[3]).?,
     );
-    try std.testing.expectEqual(suite.default_cases[4].itemsPerRange(particle_mod.particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[4]).?);
-    try std.testing.expectEqual(suite.default_cases[5].itemsPerRange(particle_mod.particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[5]).?);
+    try std.testing.expectEqual(suite.default_cases[4].itemsPerRange(particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[4]).?);
+    try std.testing.expectEqual(suite.default_cases[5].itemsPerRange(particle_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[5]).?);
     try std.testing.expectEqual(@as(?usize, null), benchmarkItemsPerRange(suite.default_cases[6]));
 }
 

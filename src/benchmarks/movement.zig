@@ -3,12 +3,12 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const thread_mod = @import("../app/thread_system.zig");
-const ThreadSystem = thread_mod.ThreadSystem;
-const data_mod = @import("../game/data_system.zig");
-const DataSystem = data_mod.DataSystem;
+const BatchStats = @import("../app/thread_system.zig").BatchStats;
+const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
+const DataSystem = @import("../game/data_system.zig").DataSystem;
+const movement_range_alignment_items = @import("../game/data_system.zig").movement_range_alignment_items;
 const movement = @import("../game/systems/movement.zig");
-const MovementSystem = movement.MovementSystem;
+const MovementSystem = @import("../game/systems/movement.zig").MovementSystem;
 const suite = @import("suite.zig");
 
 const delta_seconds: f32 = 1.0 / 60.0;
@@ -107,11 +107,11 @@ fn runOnce(
     data: *DataSystem,
     thread_system: ?*ThreadSystem,
     case: suite.BenchmarkCase,
-) thread_mod.BatchStats {
+) BatchStats {
     var slice = data.movementBodySlice();
     if (!case.usesThreadSystem()) {
         movement.updateSerial(&slice, delta_seconds);
-        return suite.serialBatch(data.movementBodySliceConst().entities.len, data_mod.movement_range_alignment_items);
+        return suite.serialBatch(data.movementBodySliceConst().entities.len, movement_range_alignment_items);
     }
 
     const stats = system.update(&slice, thread_system.?, delta_seconds, .{
@@ -125,8 +125,8 @@ fn runOnce(
 
 fn benchmarkItemsPerRange(case: suite.BenchmarkCase) ?usize {
     if (case.adaptive) return null;
-    return case.itemsPerRange(data_mod.movement_range_alignment_items) orelse
-        suite.alignItemCount(suite.default_items_per_range, data_mod.movement_range_alignment_items);
+    return case.itemsPerRange(movement_range_alignment_items) orelse
+        suite.alignItemCount(suite.default_items_per_range, movement_range_alignment_items);
 }
 
 test "movement benchmark fixture creates requested movement bodies" {
@@ -149,11 +149,11 @@ test "movement benchmark tiny serial case runs without display" {
 
 test "movement benchmark fixed cases use explicit range controls" {
     try std.testing.expectEqual(
-        suite.alignItemCount(suite.default_items_per_range, data_mod.movement_range_alignment_items),
+        suite.alignItemCount(suite.default_items_per_range, movement_range_alignment_items),
         benchmarkItemsPerRange(suite.default_cases[3]).?,
     );
-    try std.testing.expectEqual(suite.default_cases[4].itemsPerRange(data_mod.movement_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[4]).?);
-    try std.testing.expectEqual(suite.default_cases[5].itemsPerRange(data_mod.movement_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[5]).?);
+    try std.testing.expectEqual(suite.default_cases[4].itemsPerRange(movement_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[4]).?);
+    try std.testing.expectEqual(suite.default_cases[5].itemsPerRange(movement_range_alignment_items).?, benchmarkItemsPerRange(suite.default_cases[5]).?);
     try std.testing.expectEqual(@as(?usize, null), benchmarkItemsPerRange(suite.default_cases[6]));
 }
 

@@ -3,17 +3,17 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const data_mod = @import("../data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
-const CollisionResponse = data_mod.CollisionResponse;
-const simulation = @import("../simulation.zig");
-const CollisionContact = simulation.CollisionContact;
-const CollisionTriggerEvent = simulation.CollisionTriggerEvent;
-const SimulationFrame = simulation.SimulationFrame;
+const CollisionResponse = @import("../data_system.zig").CollisionResponse;
+const ConstMovementBodySlice = @import("../data_system.zig").ConstMovementBodySlice;
+const DataSystem = @import("../data_system.zig").DataSystem;
+const EntityId = @import("../data_system.zig").EntityId;
+const hot_soa_column_alignment = @import("../data_system.zig").hot_soa_column_alignment;
+const CollisionContact = @import("../simulation.zig").CollisionContact;
+const CollisionTriggerEvent = @import("../simulation.zig").CollisionTriggerEvent;
+const SimulationFrame = @import("../simulation.zig").SimulationFrame;
 const simd = @import("../../core/simd.zig");
 
-const HotF32List = std.ArrayListAligned(f32, .fromByteUnits(data_mod.hot_soa_column_alignment));
+const HotF32List = std.ArrayListAligned(f32, .fromByteUnits(hot_soa_column_alignment));
 
 pub const CollisionResponseStats = struct {
     contact_count: usize = 0,
@@ -112,7 +112,7 @@ pub const CollisionResponseSystem = struct {
         contact: CollisionContact,
         a_response: CollisionResponse,
         b_response: CollisionResponse,
-        movement: data_mod.ConstMovementBodySlice,
+        movement: ConstMovementBodySlice,
     ) void {
         const a_dynamic = a_response.mobility == .dynamic;
         const b_dynamic = b_response.mobility == .dynamic;
@@ -248,7 +248,7 @@ const ResponseIntentKind = enum {
     bounce,
 };
 
-fn debugAssertMovementIndex(movement: data_mod.ConstMovementBodySlice, entity: EntityId, movement_index: usize) void {
+fn debugAssertMovementIndex(movement: ConstMovementBodySlice, entity: EntityId, movement_index: usize) void {
     std.debug.assert(movement_index < movement.entities.len);
     std.debug.assert(entityIdsEqual(movement.entities[movement_index], entity));
 }

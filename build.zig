@@ -42,52 +42,52 @@ pub fn build(b: *std.Build) void {
     const gpu_shader_formats = shaderFormatsForTarget(target.result.os.tag);
     const force_llvm_lld = forceLlvmLldForTarget(target);
 
-    const build_options = b.addOptions();
-    build_options.addOption([]const u8, "app_name", app_name);
-    build_options.addOption([]const u8, "window_title", window_title);
-    build_options.addOption([]const u8, "asset_root", asset_root);
-    build_options.addOption(bool, "gpu_debug", gpu_debug);
-    build_options.addOption(bool, "debug_overlay", debug_overlay);
-    build_options.addOption(u8, "log_level", @intFromEnum(log_level));
-    build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
+    const buildOptions = b.addOptions();
+    buildOptions.addOption([]const u8, "app_name", app_name);
+    buildOptions.addOption([]const u8, "window_title", window_title);
+    buildOptions.addOption([]const u8, "asset_root", asset_root);
+    buildOptions.addOption(bool, "gpu_debug", gpu_debug);
+    buildOptions.addOption(bool, "debug_overlay", debug_overlay);
+    buildOptions.addOption(u8, "log_level", @intFromEnum(log_level));
+    buildOptions.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
-    const bench_build_options = b.addOptions();
-    bench_build_options.addOption([]const u8, "app_name", app_name);
-    bench_build_options.addOption([]const u8, "window_title", window_title);
-    bench_build_options.addOption([]const u8, "asset_root", asset_root);
-    bench_build_options.addOption(bool, "gpu_debug", gpu_debug);
-    bench_build_options.addOption(bool, "debug_overlay", debug_overlay);
-    bench_build_options.addOption(u8, "log_level", @intFromEnum(std.log.Level.warn));
-    bench_build_options.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
+    const benchBuildOptions = b.addOptions();
+    benchBuildOptions.addOption([]const u8, "app_name", app_name);
+    benchBuildOptions.addOption([]const u8, "window_title", window_title);
+    benchBuildOptions.addOption([]const u8, "asset_root", asset_root);
+    benchBuildOptions.addOption(bool, "gpu_debug", gpu_debug);
+    benchBuildOptions.addOption(bool, "debug_overlay", debug_overlay);
+    benchBuildOptions.addOption(u8, "log_level", @intFromEnum(std.log.Level.warn));
+    benchBuildOptions.addOption(u32, "gpu_shader_formats", gpu_shader_formats);
 
-    const exe_mod = createGameModule(b, target, optimize, build_options);
+    const exeModule = createGameModule(b, target, optimize, buildOptions);
 
     const exe = b.addExecutable(.{
         .name = app_name,
-        .root_module = exe_mod,
+        .root_module = exeModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
 
-    const gpu_smoke_mod = createSdlModule(b, target, optimize, build_options, "src/gpu_smoke.zig");
+    const gpuSmokeModule = createSdlModule(b, target, optimize, buildOptions, "src/gpu_smoke.zig");
     const gpu_smoke_exe = b.addExecutable(.{
         .name = "gpu-smoke",
-        .root_module = gpu_smoke_mod,
+        .root_module = gpuSmokeModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
 
-    const bench_mod = createSdlModule(b, target, optimize, bench_build_options, "src/benchmark_runner.zig");
+    const benchModule = createSdlModule(b, target, optimize, benchBuildOptions, "src/benchmark_runner.zig");
     const bench_exe = b.addExecutable(.{
         .name = "benchmarks",
-        .root_module = bench_mod,
+        .root_module = benchModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });
 
-    const unit_tests_mod = createSdlModule(b, target, optimize, build_options, "src/tests.zig");
+    const unitTestsModule = createSdlModule(b, target, optimize, buildOptions, "src/tests.zig");
     const unit_tests = b.addTest(.{
-        .root_module = unit_tests_mod,
+        .root_module = unitTestsModule,
         .use_llvm = force_llvm_lld,
         .use_lld = force_llvm_lld,
     });

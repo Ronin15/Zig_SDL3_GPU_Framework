@@ -7,10 +7,8 @@
 //! points. Hot render paths should keep drawing with retained TextureId values.
 
 const std = @import("std");
-const assets_mod = @import("assets.zig");
-const AssetStore = assets_mod.AssetStore;
-const image_mod = @import("image.zig");
-const LoadedImage = image_mod.LoadedImage;
+const assets = @import("assets.zig");
+const image = @import("image.zig");
 const log = @import("../core/logging.zig").assets;
 const Renderer = @import("../render/renderer.zig").Renderer;
 const TextureId = @import("../render/resources.zig").TextureId;
@@ -42,14 +40,14 @@ pub const TextureLease = struct {
 
 pub const AssetCache = struct {
     allocator: std.mem.Allocator,
-    assets: AssetStore,
+    assets: assets.AssetStore,
     backend: TextureBackend,
     entries: std.StringHashMapUnmanaged(TextureEntry) = .empty,
     lease_slots: std.ArrayList(LeaseSlot) = .empty,
     first_free_lease_slot: ?u32 = null,
 
-    pub fn init(allocator: std.mem.Allocator, assets: AssetStore) AssetCache {
-        return initWithBackend(allocator, assets, rendererBackend());
+    pub fn init(allocator: std.mem.Allocator, assetStore: assets.AssetStore) AssetCache {
+        return initWithBackend(allocator, assetStore, rendererBackend());
     }
 
     pub fn deinit(self: *AssetCache, renderer: *Renderer) void {
@@ -60,10 +58,10 @@ pub const AssetCache = struct {
         return self.acquireTextureWithContext(@ptrCast(renderer), relative_path);
     }
 
-    fn initWithBackend(allocator: std.mem.Allocator, assets: AssetStore, backend: TextureBackend) AssetCache {
+    fn initWithBackend(allocator: std.mem.Allocator, assetStore: assets.AssetStore, backend: TextureBackend) AssetCache {
         return .{
             .allocator = allocator,
-            .assets = assets,
+            .assets = assetStore,
             .backend = backend,
         };
     }
@@ -73,7 +71,7 @@ pub const AssetCache = struct {
         backend_context: *anyopaque,
         relative_path: []const u8,
     ) !TextureLease {
-        try assets_mod.validateRelativePath(relative_path);
+        try assets.validateRelativePath(relative_path);
 
         if (self.entries.getPtr(relative_path)) |entry| {
             if (entry.retain_count == std.math.maxInt(u32)) return error.TooManyTextureLeases;
@@ -92,13 +90,13 @@ pub const AssetCache = struct {
         var entry_inserted = false;
         errdefer if (!entry_inserted) self.allocator.free(owned_path);
 
-        var image = image_mod.loadPng(self.assets, owned_path) catch |err| {
+        var loaded_image = image.loadPng(self.assets, owned_path) catch |err| {
             log.warn("texture asset unavailable \"{s}\": {}", .{ owned_path, err });
             return err;
         };
-        defer image.deinit();
+        defer loaded_image.deinit();
 
-        const texture = try self.backend.upload_image(backend_context, image);
+        const texture = try self.backend.upload_image(backend_context, loaded_image);
         var texture_inserted = false;
         errdefer if (!texture_inserted) self.backend.destroy_texture(backend_context, texture);
 
@@ -268,7 +266,7 @@ const LeaseSlot = struct {
 };
 
 const TextureBackend = struct {
-    upload_image: *const fn (*anyopaque, LoadedImage) anyerror!TextureId,
+    upload_image: *const fn (*anyopaque, image.LoadedImage) anyerror!TextureId,
     destroy_texture: *const fn (*anyopaque, TextureId) void,
 };
 
@@ -279,9 +277,9 @@ fn rendererBackend() TextureBackend {
     };
 }
 
-fn rendererUploadImage(context: *anyopaque, image: LoadedImage) !TextureId {
+fn rendererUploadImage(context: *anyopaque, loaded_image: image.LoadedImage) !TextureId {
     const renderer: *Renderer = @ptrCast(@alignCast(context));
-    return renderer.createTextureFromPixels(image.pixels, image.width, image.height, image.pitch);
+    return renderer.createTextureFromPixels(loaded_image.pixels, loaded_image.width, loaded_image.height, loaded_image.pitch);
 }
 
 fn rendererDestroyTexture(context: *anyopaque, texture: TextureId) void {
@@ -314,16 +312,16 @@ const FakeBackend = struct {
         };
     }
 
-    fn uploadImage(context: *anyopaque, image: LoadedImage) !TextureId {
+    fn uploadImage(context: *anyopaque, loaded_image: image.LoadedImage) !TextureId {
         const self: *FakeBackend = @ptrCast(@alignCast(context));
         if (self.fail_upload) return error.FakeUploadFailed;
 
         const texture = try TextureId.init(self.next_index, 1);
         self.next_index += 1;
         self.upload_count += 1;
-        self.last_width = image.width;
-        self.last_height = image.height;
-        self.last_pitch = image.pitch;
+        self.last_width = loaded_image.width;
+        self.last_height = loaded_image.height;
+        self.last_pitch = loaded_image.pitch;
         return texture;
     }
 
@@ -337,7 +335,7 @@ const FakeBackend = struct {
 fn testCache(allocator: std.mem.Allocator) AssetCache {
     return AssetCache.initWithBackend(
         allocator,
-        AssetStore.init(allocator, std.testing.io, "assets"),
+        assets.AssetStore.init(allocator, std.testing.io, "assets"),
         FakeBackend.backend(),
     );
 }

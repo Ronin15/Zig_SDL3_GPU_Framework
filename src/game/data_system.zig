@@ -7,7 +7,7 @@
 //! directly with core/simd.zig and split contiguous ranges through ThreadSystem.
 
 const std = @import("std");
-const assets_mod = @import("../assets/assets.zig");
+const assets = @import("../assets/assets.zig");
 const config = @import("../config.zig");
 const math = @import("../core/math.zig");
 const simd = @import("../core/simd.zig");
@@ -461,7 +461,7 @@ pub const DataSystem = struct {
     }
 
     pub fn setAssetReference(self: *DataSystem, id: EntityId, asset_ref: AssetReference) !void {
-        try assets_mod.validateRelativePath(asset_ref.relative_path);
+        try assets.validateRelativePath(asset_ref.relative_path);
         const slot = self.resolveSlot(id) orelse return error.InvalidEntity;
 
         const owned_path = try self.allocator.dupe(u8, asset_ref.relative_path);
@@ -542,7 +542,7 @@ pub const DataSystem = struct {
             switch (command) {
                 .create_entity => |template| {
                     if (template.asset_reference) |asset_ref| {
-                        try assets_mod.validateRelativePath(asset_ref.relative_path);
+                        try assets.validateRelativePath(asset_ref.relative_path);
                     }
                     const entity = try self.createEntity();
                     errdefer _ = self.destroyEntity(entity);
@@ -614,7 +614,7 @@ pub const DataSystem = struct {
             switch (command) {
                 .create_entity => |template| {
                     if (template.asset_reference) |asset_ref| {
-                        try assets_mod.validateRelativePath(asset_ref.relative_path);
+                        try assets.validateRelativePath(asset_ref.relative_path);
                     }
                     if (template.collision_bounds) |bounds| {
                         try validateCollisionBounds(bounds);
@@ -623,7 +623,7 @@ pub const DataSystem = struct {
                         try validateCollisionResponse(response);
                     }
                 },
-                .set_asset_reference => |set| try assets_mod.validateRelativePath(set.asset_reference.relative_path),
+                .set_asset_reference => |set| try assets.validateRelativePath(set.asset_reference.relative_path),
                 .set_collision_bounds => |set| try validateCollisionBounds(set.bounds),
                 .set_collision_response => |set| try validateCollisionResponse(set.response),
                 else => {},

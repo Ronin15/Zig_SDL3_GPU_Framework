@@ -3,21 +3,25 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const thread_mod = @import("../../app/thread_system.zig");
-const ThreadSystem = thread_mod.ThreadSystem;
-const ParallelRange = thread_mod.ParallelRange;
-const AdaptiveWorkTuner = thread_mod.AdaptiveWorkTuner;
-const data_mod = @import("../data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
+const AdaptiveWorkProfile = @import("../../app/thread_system.zig").AdaptiveWorkProfile;
+const AdaptiveWorkTuner = @import("../../app/thread_system.zig").AdaptiveWorkTuner;
+const BatchStats = @import("../../app/thread_system.zig").BatchStats;
+const ParallelRange = @import("../../app/thread_system.zig").ParallelRange;
+const ThreadSystem = @import("../../app/thread_system.zig").ThreadSystem;
+const WorkerId = @import("../../app/thread_system.zig").WorkerId;
+const alignItemCount = @import("../../app/thread_system.zig").alignItemCount;
+const rangeCount = @import("../../app/thread_system.zig").rangeCount;
+const DataSystem = @import("../data_system.zig").DataSystem;
+const EntityId = @import("../data_system.zig").EntityId;
+const hot_soa_column_alignment = @import("../data_system.zig").hot_soa_column_alignment;
+const movement_range_alignment_items = @import("../data_system.zig").movement_range_alignment_items;
 const simd = @import("../../core/simd.zig");
-const simulation = @import("../simulation.zig");
-const CollisionContact = simulation.CollisionContact;
-const RangeOutputStream = simulation.RangeOutputStream;
+const CollisionContact = @import("../simulation.zig").CollisionContact;
+const RangeOutputStream = @import("../simulation.zig").RangeOutputStream;
 
-pub const collision_range_alignment_items: usize = data_mod.movement_range_alignment_items;
+pub const collision_range_alignment_items: usize = movement_range_alignment_items;
 
-const HotF32List = std.ArrayListAligned(f32, .fromByteUnits(data_mod.hot_soa_column_alignment));
+const HotF32List = std.ArrayListAligned(f32, .fromByteUnits(hot_soa_column_alignment));
 
 pub const CollisionConfig = struct {
     min_parallel_items: ?usize = null,
@@ -32,9 +36,9 @@ pub const CollisionStats = struct {
     body_count: usize = 0,
     contact_count: usize = 0,
     candidate_pair_count: usize = 0,
-    work_batch: thread_mod.BatchStats = .{},
-    count_batch: thread_mod.BatchStats = .{},
-    write_batch: thread_mod.BatchStats = .{},
+    work_batch: BatchStats = .{},
+    count_batch: BatchStats = .{},
+    write_batch: BatchStats = .{},
     used_full_sort: bool = false,
 };
 
@@ -105,13 +109,13 @@ pub const CollisionSystem = struct {
                 .range_alignment_items = collision_range_alignment_items,
             })
         else
-            thread_mod.AdaptiveWorkProfile{
+            AdaptiveWorkProfile{
                 .worker_threads = max_worker_threads,
                 .items_per_range = system_config.items_per_range orelse thread_system.config.items_per_range,
             };
         const items_per_range = selected_profile.items_per_range;
-        const aligned_items_per_range = thread_mod.alignItemCount(@max(items_per_range, @as(usize, 1)), collision_range_alignment_items);
-        const range_count = thread_mod.rangeCount(body_count, aligned_items_per_range);
+        const aligned_items_per_range = alignItemCount(@max(items_per_range, @as(usize, 1)), collision_range_alignment_items);
+        const range_count = rangeCount(body_count, aligned_items_per_range);
         const selected_worker_threads = if (body_count < (system_config.min_parallel_items orelse thread_system.config.min_parallel_items) or range_count <= 1)
             @as(usize, 0)
         else
@@ -301,14 +305,14 @@ const CollisionJobContext = struct {
     candidate_counts: []usize,
 };
 
-fn countContactsJob(context: *anyopaque, range: ParallelRange, _: thread_mod.WorkerId) void {
+fn countContactsJob(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *CollisionJobContext = @ptrCast(@alignCast(context));
     const result = countContactsInRange(job.system, range);
     job.candidate_counts[range.index] = result.candidate_pairs;
     job.contacts.addCount(range.index, result.contacts);
 }
 
-fn writeContactsJob(context: *anyopaque, range: ParallelRange, _: thread_mod.WorkerId) void {
+fn writeContactsJob(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *CollisionJobContext = @ptrCast(@alignCast(context));
     var writer = job.contacts.rangeWriter(range.index);
     writeContactsInRange(job.system, range, &writer);
@@ -415,7 +419,7 @@ fn sumCounts(values: []const usize) usize {
     return total;
 }
 
-fn serialBatch(item_count: usize) thread_mod.BatchStats {
+fn serialBatch(item_count: usize) BatchStats {
     return .{
         .item_count = item_count,
         .range_count = if (item_count > 0) 1 else 0,
@@ -426,7 +430,7 @@ fn serialBatch(item_count: usize) thread_mod.BatchStats {
     };
 }
 
-fn combinedCollisionBatch(count_batch: thread_mod.BatchStats, write_batch: thread_mod.BatchStats) thread_mod.BatchStats {
+fn combinedCollisionBatch(count_batch: BatchStats, write_batch: BatchStats) BatchStats {
     const total_range_count = count_batch.range_count + write_batch.range_count;
     const total_worker_ranges = count_batch.worker_thread_ranges + write_batch.worker_thread_ranges;
     const worker_utilization = if (total_range_count == 0 or count_batch.active_worker_threads == 0)
@@ -625,9 +629,9 @@ test "collision scratch columns are cache-line aligned" {
     defer contacts.deinit();
     _ = try system.updateSerial(&data, &contacts);
 
-    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.min_x.items.ptr) % data_mod.hot_soa_column_alignment);
-    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.min_y.items.ptr) % data_mod.hot_soa_column_alignment);
-    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.max_x.items.ptr) % data_mod.hot_soa_column_alignment);
-    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.max_y.items.ptr) % data_mod.hot_soa_column_alignment);
+    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.min_x.items.ptr) % hot_soa_column_alignment);
+    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.min_y.items.ptr) % hot_soa_column_alignment);
+    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.max_x.items.ptr) % hot_soa_column_alignment);
+    try std.testing.expectEqual(@as(usize, 0), @intFromPtr(system.max_y.items.ptr) % hot_soa_column_alignment);
     try std.testing.expectEqual(@as(usize, 0), simd.vectorizedEnd(system.bodyCount()) % simd.lane_count);
 }

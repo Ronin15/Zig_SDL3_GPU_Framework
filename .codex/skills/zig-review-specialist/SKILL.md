@@ -20,6 +20,7 @@ Stay review-only unless the user explicitly asks for fixes. Recommend `zig-debug
 ## What To Inspect
 
 - Zig correctness: error handling, pointer casts, comptime assumptions, allocator use, lifetime, cleanup, integer casts, slices, sentinel strings, and test coverage.
+- Zig style: `const std = @import("std");` is standard; flag project import clutter such as `_mod` suffixes, `const Type = file.Type` bridge aliases, and double names like `thread.ThreadSystem`. Direct declaration imports are preferred when they keep call sites clear. Do not flag SDL/C symbols, generated build-option names, or `std.Build` field names for Zig renaming.
 - Game-loop behavior: fixed-step updates, render interpolation, pause policy, frame pacing, and visible vs non-renderable window state.
 - Engine boundaries: app coordination, rendering, game state, platform integration, assets, and small shared primitives should stay in their owning layers.
 - SDL3/SDL_GPU usage: resource creation/release pairing, main-thread ownership, swapchain failure paths, shader format selection, texture upload validation, and no game-layer raw GPU calls.

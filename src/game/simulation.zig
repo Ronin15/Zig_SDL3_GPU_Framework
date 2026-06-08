@@ -7,10 +7,13 @@
 //! per-step streams for processor events, intents, and deferred structure.
 
 const std = @import("std");
-const thread_mod = @import("../app/thread_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
-const data_mod = @import("data_system.zig");
+const ParallelRange = @import("../app/thread_system.zig").ParallelRange;
+const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
+const WorkerId = @import("../app/thread_system.zig").WorkerId;
+const DataSystem = @import("data_system.zig").DataSystem;
+const EntityId = @import("data_system.zig").EntityId;
+const StructuralCommand = @import("data_system.zig").StructuralCommand;
+const StructuralCommitStats = @import("data_system.zig").StructuralCommitStats;
 
 pub const SimulationPhase = enum {
     idle,
@@ -63,7 +66,7 @@ pub const SimulationFrame = struct {
     intents: RangeOutputStream(SimulationIntent),
     contacts: RangeOutputStream(CollisionContact),
     collision_triggers: RangeOutputStream(CollisionTriggerEvent),
-    structural_commands: RangeOutputStream(data_mod.StructuralCommand),
+    structural_commands: RangeOutputStream(StructuralCommand),
 
     pub fn init(allocator: std.mem.Allocator) SimulationFrame {
         return .{
@@ -72,7 +75,7 @@ pub const SimulationFrame = struct {
             .intents = RangeOutputStream(SimulationIntent).init(allocator),
             .contacts = RangeOutputStream(CollisionContact).init(allocator),
             .collision_triggers = RangeOutputStream(CollisionTriggerEvent).init(allocator),
-            .structural_commands = RangeOutputStream(data_mod.StructuralCommand).init(allocator),
+            .structural_commands = RangeOutputStream(StructuralCommand).init(allocator),
         };
     }
 
@@ -114,7 +117,7 @@ pub const SimulationFrame = struct {
         try self.structural_commands.reserve(range_count, structural_command_capacity);
     }
 
-    pub fn applyStructuralCommands(self: *SimulationFrame, data: *DataSystem) !data_mod.StructuralCommitStats {
+    pub fn applyStructuralCommands(self: *SimulationFrame, data: *DataSystem) !StructuralCommitStats {
         self.phase = .commit_structural;
         return try data.applyStructuralCommands(self.structural_commands.mergedItems());
     }
@@ -254,7 +257,7 @@ const StreamJobContext = struct {
     stream: *RangeOutputStream(SimulationEvent),
 };
 
-fn countEvenEvents(context: *anyopaque, range: thread_mod.ParallelRange, _: thread_mod.WorkerId) void {
+fn countEvenEvents(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *StreamJobContext = @ptrCast(@alignCast(context));
     var count: usize = 0;
     for (range.start..range.end) |item| {
@@ -263,7 +266,7 @@ fn countEvenEvents(context: *anyopaque, range: thread_mod.ParallelRange, _: thre
     job.stream.addCount(range.index, count);
 }
 
-fn writeEvenEvents(context: *anyopaque, range: thread_mod.ParallelRange, _: thread_mod.WorkerId) void {
+fn writeEvenEvents(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *StreamJobContext = @ptrCast(@alignCast(context));
     var writer = job.stream.rangeWriter(range.index);
     for (range.start..range.end) |item| {
@@ -308,7 +311,7 @@ test "range output stream keeps deterministic order across threaded passes" {
 
     var stream = RangeOutputStream(SimulationEvent).init(std.testing.allocator);
     defer stream.deinit();
-    var threads = try thread_mod.ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 2,
         .min_parallel_items = 1,
         .items_per_range = 5,

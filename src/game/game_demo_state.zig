@@ -4,24 +4,30 @@
 
 const config = @import("../config.zig");
 const math = @import("../core/math.zig");
+const builtin = @import("builtin");
 const std = @import("std");
-const data_mod = @import("data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const EntityId = data_mod.EntityId;
-const audio_mod = @import("../app/audio.zig");
-const AudioCommandBuffer = audio_mod.AudioCommandBuffer;
-const LoopingSfxId = audio_mod.LoopingSfxId;
+const AudioCommandBuffer = @import("../app/audio.zig").AudioCommandBuffer;
+const LoopingSfxId = @import("../app/audio.zig").LoopingSfxId;
+const component_masks = @import("data_system.zig").component_masks;
+const CollisionResponseMobility = @import("data_system.zig").CollisionResponseMobility;
+const CollisionResponseMode = @import("data_system.zig").CollisionResponseMode;
+const DataSystem = @import("data_system.zig").DataSystem;
+const EntityId = @import("data_system.zig").EntityId;
+const movement_range_alignment_items = @import("data_system.zig").movement_range_alignment_items;
 const InputState = @import("../app/input.zig").InputState;
 const Player = @import("player.zig").Player;
 const CollisionSystem = @import("systems/collision.zig").CollisionSystem;
 const CollisionResponseSystem = @import("systems/collision_response.zig").CollisionResponseSystem;
 const MovementSystem = @import("systems/movement.zig").MovementSystem;
 const ParticleSystem = @import("systems/particle.zig").ParticleSystem;
+const CollisionContact = @import("simulation.zig").CollisionContact;
 const SimulationFrame = @import("simulation.zig").SimulationFrame;
-const state_mod = @import("../app/state.zig");
-const RenderContext = state_mod.RenderContext;
-const StateTransitions = state_mod.StateTransitions;
-const UpdateContext = state_mod.UpdateContext;
+const SimulationPhase = @import("simulation.zig").SimulationPhase;
+const RenderContext = @import("../app/state.zig").RenderContext;
+const StateTransitions = @import("../app/state.zig").StateTransitions;
+const UpdateContext = @import("../app/state.zig").UpdateContext;
+const Renderer = @import("../render/renderer.zig").Renderer;
+const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
 const c = @import("../platform/sdl.zig").c;
 
 const test_square_count = 4;
@@ -215,7 +221,7 @@ pub const GameDemoState = struct {
         }
     }
 
-    fn contactAudioPosition(self: *const GameDemoState, contact: @import("simulation.zig").CollisionContact) ?math.Vec2 {
+    fn contactAudioPosition(self: *const GameDemoState, contact: CollisionContact) ?math.Vec2 {
         const a = self.data.movementBodyConst(contact.a) orelse return null;
         const b = self.data.movementBodyConst(contact.b) orelse return null;
         return .{
@@ -262,7 +268,7 @@ pub const GameDemoState = struct {
         };
     }
 
-    fn collisionSfxFrequencyRatio(contact: @import("simulation.zig").CollisionContact) f32 {
+    fn collisionSfxFrequencyRatio(contact: CollisionContact) f32 {
         var hash = CollisionSfxCooldown.keyFor(contact.a, contact.b);
         hash ^= @as(u64, @intFromFloat(@abs(contact.normal_x) * 31.0));
         hash ^= @as(u64, @intFromFloat(@abs(contact.normal_y) * 47.0)) << 8;
@@ -390,7 +396,7 @@ fn spawnObstacles(data: *DataSystem) ![obstacle_count]EntityId {
 fn renderPrimitiveEntity(
     data: *const DataSystem,
     entity: EntityId,
-    renderer: *@import("../render/renderer.zig").Renderer,
+    renderer: *Renderer,
     interpolation_alpha: f32,
 ) !void {
     const body = data.movementBodyConst(entity) orelse return;
@@ -427,31 +433,31 @@ test "demo spawns colored moving test squares" {
     try std.testing.expectEqual(@as(usize, test_square_count + obstacle_count + 1), demo.data.collisionResponseSliceConst().entities.len);
     try std.testing.expectEqual(@as(usize, 0), demo.particles.activeCount());
     for (demo.test_squares) |entity| {
-        try std.testing.expect(demo.data.hasComponents(entity, data_mod.component_masks.movement_body | data_mod.component_masks.primitive_visual | data_mod.component_masks.collision_bounds | data_mod.component_masks.collision_response));
+        try std.testing.expect(demo.data.hasComponents(entity, component_masks.movement_body | component_masks.primitive_visual | component_masks.collision_bounds | component_masks.collision_response));
         const body = demo.data.movementBodyConst(entity).?;
         try std.testing.expect(body.velocity.x != 0 or body.velocity.y != 0);
         const visual = demo.data.primitiveVisualConst(entity).?;
         try std.testing.expect(visual.color.a > 0);
-        try std.testing.expectEqual(data_mod.CollisionResponseMode.bounce, demo.data.collisionResponseConst(entity).?.mode);
+        try std.testing.expectEqual(CollisionResponseMode.bounce, demo.data.collisionResponseConst(entity).?.mode);
     }
     for (demo.obstacles) |entity| {
-        try std.testing.expect(demo.data.hasComponents(entity, data_mod.component_masks.movement_body | data_mod.component_masks.primitive_visual | data_mod.component_masks.collision_bounds | data_mod.component_masks.collision_response));
+        try std.testing.expect(demo.data.hasComponents(entity, component_masks.movement_body | component_masks.primitive_visual | component_masks.collision_bounds | component_masks.collision_response));
         const body = demo.data.movementBodyConst(entity).?;
         try std.testing.expectEqual(@as(f32, 0), body.velocity.x);
         try std.testing.expectEqual(@as(f32, 0), body.velocity.y);
-        try std.testing.expectEqual(data_mod.CollisionResponseMobility.static, demo.data.collisionResponseConst(entity).?.mobility);
+        try std.testing.expectEqual(CollisionResponseMobility.static, demo.data.collisionResponseConst(entity).?.mobility);
     }
 }
 
 test "demo owns and completes a simulation frame during update" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var demo = try GameDemoState.init(std.testing.allocator, 800, 450);
     defer demo.deinit();
-    var threads = try @import("../app/thread_system.zig").ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 0,
         .min_parallel_items = 1,
-        .items_per_range = data_mod.movement_range_alignment_items,
+        .items_per_range = movement_range_alignment_items,
     });
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);
@@ -474,7 +480,7 @@ test "demo owns and completes a simulation frame during update" {
         .thread_system = &threads,
     });
 
-    try std.testing.expectEqual(@import("simulation.zig").SimulationPhase.finished, demo.simulation_frame.phase);
+    try std.testing.expectEqual(SimulationPhase.finished, demo.simulation_frame.phase);
     try std.testing.expectEqual(@as(usize, 0), demo.simulation_frame.structural_commands.mergedItems().len);
     const player_after = demo.data.movementBodyConst(demo.player.entity).?;
     try std.testing.expect(player_after.position.x > player_before.position.x);
@@ -489,14 +495,14 @@ test "demo owns and completes a simulation frame during update" {
 }
 
 test "demo collision response blocks player against obstacles" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var demo = try GameDemoState.init(std.testing.allocator, 800, 450);
     defer demo.deinit();
-    var threads = try @import("../app/thread_system.zig").ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 0,
         .min_parallel_items = 1,
-        .items_per_range = data_mod.movement_range_alignment_items,
+        .items_per_range = movement_range_alignment_items,
     });
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);
@@ -529,14 +535,14 @@ test "demo collision response blocks player against obstacles" {
 }
 
 test "demo collision response handles player contacts with moving entities" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var demo = try GameDemoState.init(std.testing.allocator, 800, 450);
     defer demo.deinit();
-    var threads = try @import("../app/thread_system.zig").ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
         .max_worker_threads = 0,
         .min_parallel_items = 1,
-        .items_per_range = data_mod.movement_range_alignment_items,
+        .items_per_range = movement_range_alignment_items,
     });
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);

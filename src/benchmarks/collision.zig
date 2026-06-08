@@ -3,15 +3,15 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
-const thread_mod = @import("../app/thread_system.zig");
-const ThreadSystem = thread_mod.ThreadSystem;
-const data_mod = @import("../game/data_system.zig");
-const DataSystem = data_mod.DataSystem;
-const collision_mod = @import("../game/systems/collision.zig");
-const CollisionSystem = collision_mod.CollisionSystem;
+const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
+const math = @import("../core/math.zig");
+const DataSystem = @import("../game/data_system.zig").DataSystem;
+const CollisionStats = @import("../game/systems/collision.zig").CollisionStats;
+const CollisionSystem = @import("../game/systems/collision.zig").CollisionSystem;
+const collision_range_alignment_items = @import("../game/systems/collision.zig").collision_range_alignment_items;
 const simulation = @import("../game/simulation.zig");
-const CollisionContact = simulation.CollisionContact;
-const RangeOutputStream = simulation.RangeOutputStream;
+const CollisionContact = @import("../game/simulation.zig").CollisionContact;
+const RangeOutputStream = @import("../game/simulation.zig").RangeOutputStream;
 const suite = @import("suite.zig");
 
 pub const group = suite.BenchmarkGroup{
@@ -113,7 +113,7 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     }
 
     var accumulator = suite.StatsAccumulator.init(item_count);
-    var last_collision_stats = collision_mod.CollisionStats{};
+    var last_collision_stats = CollisionStats{};
     for (0..options.iterations) |_| {
         const start_ns = suite.nowNs(io);
         last_collision_stats = try runOnce(&system, &data, &contacts, if (threads) |*thread_system| thread_system else null, case);
@@ -136,7 +136,7 @@ fn runOnce(
     contacts: *RangeOutputStream(CollisionContact),
     thread_system: ?*ThreadSystem,
     case: suite.BenchmarkCase,
-) !collision_mod.CollisionStats {
+) !CollisionStats {
     if (!case.usesThreadSystem()) {
         return try system.updateSerial(data, contacts);
     }
@@ -151,11 +151,11 @@ fn runOnce(
 
 fn benchmarkItemsPerRange(case: suite.BenchmarkCase) ?usize {
     if (case.adaptive) return null;
-    return case.itemsPerRange(collision_mod.collision_range_alignment_items) orelse
-        suite.alignItemCount(suite.default_items_per_range, collision_mod.collision_range_alignment_items);
+    return case.itemsPerRange(collision_range_alignment_items) orelse
+        suite.alignItemCount(suite.default_items_per_range, collision_range_alignment_items);
 }
 
-fn benchmarkPosition(index: usize, columns: usize, mode: FixtureMode) @import("../core/math.zig").Vec2 {
+fn benchmarkPosition(index: usize, columns: usize, mode: FixtureMode) math.Vec2 {
     return switch (mode) {
         .dense => .{
             .x = @floatFromInt((index % columns) * 7),
@@ -165,7 +165,7 @@ fn benchmarkPosition(index: usize, columns: usize, mode: FixtureMode) @import(".
     };
 }
 
-fn sparseBenchmarkPosition(index: usize, columns: usize) @import("../core/math.zig").Vec2 {
+fn sparseBenchmarkPosition(index: usize, columns: usize) math.Vec2 {
     const sparse_group_index = index / 20;
     const slot = index % 20;
     const base_index = sparse_group_index * 20 + if (slot == 1) @as(usize, 0) else slot;

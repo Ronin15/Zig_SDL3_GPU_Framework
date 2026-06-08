@@ -6,17 +6,17 @@
 //! This system intentionally owns its own fixed-capacity SoA pool because
 //! particles are visual effect state, not persistent DataSystem entities.
 
+const builtin = @import("builtin");
 const std = @import("std");
-const thread_mod = @import("../../app/thread_system.zig");
-const ThreadSystem = thread_mod.ThreadSystem;
-const ParallelRange = thread_mod.ParallelRange;
-const BatchStats = thread_mod.BatchStats;
-const AdaptiveWorkTuner = thread_mod.AdaptiveWorkTuner;
 const config = @import("../../config.zig");
 const math = @import("../../core/math.zig");
 const simd = @import("../../core/simd.zig");
-const renderer_mod = @import("../../render/renderer.zig");
-const Renderer = renderer_mod.Renderer;
+const Renderer = @import("../../render/renderer.zig").Renderer;
+const AdaptiveWorkTuner = @import("../../app/thread_system.zig").AdaptiveWorkTuner;
+const BatchStats = @import("../../app/thread_system.zig").BatchStats;
+const ParallelRange = @import("../../app/thread_system.zig").ParallelRange;
+const ThreadSystem = @import("../../app/thread_system.zig").ThreadSystem;
+const WorkerId = @import("../../app/thread_system.zig").WorkerId;
 
 pub const hot_particle_column_alignment: usize = 64;
 pub const particle_range_alignment_items: usize = hot_particle_column_alignment / @sizeOf(f32);
@@ -558,7 +558,7 @@ pub const ParticleSystem = struct {
     }
 };
 
-fn particleJob(context: *anyopaque, range: ParallelRange, _: @import("../../app/thread_system.zig").WorkerId) void {
+fn particleJob(context: *anyopaque, range: ParallelRange, _: WorkerId) void {
     const job: *ParticleJobContext = @ptrCast(@alignCast(context));
     processRange(&job.particles, range, job.delta_seconds);
 }
@@ -808,7 +808,7 @@ test "serial particle simd path matches scalar path" {
 }
 
 test "threaded particle update matches serial update" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var threaded_particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
     defer threaded_particles.deinit();
@@ -838,7 +838,7 @@ test "threaded particle update matches serial update" {
 }
 
 test "particle explicit items_per_range bypasses tuner" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
     defer particles.deinit();
@@ -870,7 +870,7 @@ test "particle explicit items_per_range bypasses tuner" {
 }
 
 test "particle system owns adaptive tuner for default update" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
     defer particles.deinit();
@@ -897,7 +897,7 @@ test "particle system owns adaptive tuner for default update" {
 }
 
 test "particle update uses provided adaptive tuner" {
-    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    if (builtin.single_threaded) return error.SkipZigTest;
 
     var particles = try ParticleSystem.init(std.testing.allocator, .{ .capacity = particle_range_alignment_items * 8 });
     defer particles.deinit();

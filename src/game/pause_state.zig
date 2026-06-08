@@ -4,12 +4,10 @@
 
 const config = @import("../config.zig");
 const Renderer = @import("../render/renderer.zig").Renderer;
-const text_mod = @import("../render/text.zig");
-const TextTextureLease = text_mod.TextTextureLease;
-const state_mod = @import("../app/state.zig");
-const RenderContext = state_mod.RenderContext;
-const StateTransitions = state_mod.StateTransitions;
-const UpdateContext = state_mod.UpdateContext;
+const TextTextureLease = @import("../render/text.zig").TextTextureLease;
+const RenderContext = @import("../app/state.zig").RenderContext;
+const StateTransitions = @import("../app/state.zig").StateTransitions;
+const UpdateContext = @import("../app/state.zig").UpdateContext;
 const c = @import("../platform/sdl.zig").c;
 
 pub const PauseState = struct {

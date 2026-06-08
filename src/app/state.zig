@@ -6,11 +6,10 @@ const std = @import("std");
 const AudioCommandBuffer = @import("audio.zig").AudioCommandBuffer;
 const FrameCommands = @import("input.zig").FrameCommands;
 const InputState = @import("input.zig").InputState;
-const assets_cache = @import("../assets/cache.zig");
-const AssetCache = assets_cache.AssetCache;
-const TextureLease = assets_cache.TextureLease;
-const input_router = @import("input_router.zig");
-const InputRoutingPolicy = input_router.InputRoutingPolicy;
+const AssetCache = @import("../assets/cache.zig").AssetCache;
+const TextureLease = @import("../assets/cache.zig").TextureLease;
+const inputRouter = @import("input_router.zig");
+const InputRoutingPolicy = @import("input_router.zig").InputRoutingPolicy;
 const Renderer = @import("../render/renderer.zig").Renderer;
 const TextService = @import("../render/text.zig").TextService;
 const ThreadSystem = @import("thread_system.zig").ThreadSystem;
@@ -914,13 +913,13 @@ test "state stack input routing follows active state policy" {
     var input = InputState{};
     var commands = FrameCommands{};
     var move_down = testKeyEvent(c.SDL_EVENT_KEY_DOWN, c.SDLK_A, false);
-    input_router.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
+    inputRouter.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
     try std.testing.expect(!input.isHeld(.moveLeft));
 
     try std.testing.expect(stack.remove(modal_handle));
     try std.testing.expect(stack.inputRoutingPolicy().allowsAction(.moveLeft));
     try std.testing.expect(stack.inputRoutingPolicy().allowsContext(.ui));
-    input_router.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
+    inputRouter.routeEvent(stack.inputRoutingPolicy(), &move_down, &input, &commands);
     try std.testing.expect(input.isHeld(.moveLeft));
 
     _ = try stack.pushOpaque(TestingState, .{});

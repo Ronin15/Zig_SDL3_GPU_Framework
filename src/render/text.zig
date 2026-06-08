@@ -7,8 +7,7 @@
 //! not per-frame draw submission.
 
 const std = @import("std");
-const assets_mod = @import("../assets/assets.zig");
-const AssetStore = assets_mod.AssetStore;
+const assets = @import("../assets/assets.zig");
 const config = @import("../config.zig");
 const log = @import("../core/logging.zig").render;
 const Renderer = @import("renderer.zig").Renderer;
@@ -106,7 +105,7 @@ pub const FontDesc = struct {
     point_size: f32,
 
     pub fn validate(self: FontDesc) !void {
-        try assets_mod.validateRelativePath(self.asset_path);
+        try assets.validateRelativePath(self.asset_path);
         if (self.point_size <= 0 or self.point_size != self.point_size) return error.InvalidFontSize;
     }
 };
@@ -161,7 +160,7 @@ pub const RenderedText = struct {
 
 pub const TextService = struct {
     allocator: std.mem.Allocator,
-    assets: AssetStore,
+    assets: assets.AssetStore,
     backend: TextBackend,
     fonts: std.ArrayList(FontSlot) = .empty,
     entries: std.ArrayList(TextEntrySlot) = .empty,
@@ -172,8 +171,8 @@ pub const TextService = struct {
     default_font: FontId = FontId.invalid,
     ttf_initialized: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator, assets: AssetStore) !TextService {
-        var service = initWithBackend(allocator, assets, rendererBackend());
+    pub fn init(allocator: std.mem.Allocator, assetStore: assets.AssetStore) !TextService {
+        var service = initWithBackend(allocator, assetStore, rendererBackend());
         errdefer service.deinitAfterFailedInit();
 
         if (!c.TTF_Init()) {
@@ -233,10 +232,10 @@ pub const TextService = struct {
         return self.acquireTextWithContext(@ptrCast(renderer), request);
     }
 
-    fn initWithBackend(allocator: std.mem.Allocator, assets: AssetStore, backend: TextBackend) TextService {
+    fn initWithBackend(allocator: std.mem.Allocator, assetStore: assets.AssetStore, backend: TextBackend) TextService {
         return .{
             .allocator = allocator,
-            .assets = assets,
+            .assets = assetStore,
             .backend = backend,
         };
     }
@@ -777,7 +776,7 @@ const FakeBackend = struct {
 fn initFakeTextService(allocator: std.mem.Allocator, fake: *FakeBackend) !TextService {
     var service = TextService.initWithBackend(
         allocator,
-        AssetStore.init(allocator, std.testing.io, "assets"),
+        assets.AssetStore.init(allocator, std.testing.io, "assets"),
         FakeBackend.backend(),
     );
     const owned_path = try allocator.dupe(u8, default_font_path);

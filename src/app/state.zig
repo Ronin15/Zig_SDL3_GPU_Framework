@@ -3,6 +3,7 @@
 // Licensed under the MIT License - see LICENSE file for details
 
 const std = @import("std");
+const AudioCommandBuffer = @import("audio.zig").AudioCommandBuffer;
 const FrameCommands = @import("input.zig").FrameCommands;
 const InputState = @import("input.zig").InputState;
 const AssetCache = @import("../assets/cache.zig").AssetCache;
@@ -50,6 +51,7 @@ pub const TransitionApplyResult = struct {
 
 pub const UpdateContext = struct {
     input: *const InputState,
+    audio: *AudioCommandBuffer,
     delta_seconds: f32,
     transitions: *StateTransitions,
     thread_system: *ThreadSystem,
@@ -470,12 +472,14 @@ fn initTestThreadSystem() !ThreadSystem {
 
 fn testUpdateContext(
     input: *const InputState,
+    audio: *AudioCommandBuffer,
     delta_seconds: f32,
     transitions: *StateTransitions,
     thread_system: *ThreadSystem,
 ) UpdateContext {
     return .{
         .input = input,
+        .audio = audio,
         .delta_seconds = delta_seconds,
         .transitions = transitions,
         .thread_system = thread_system,
@@ -732,18 +736,20 @@ test "modal state blocks updates below and pass-through state allows them" {
     defer transitions.deinit();
     var threads = try initTestThreadSystem();
     defer threads.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
     var stack = StateStack.init(std.testing.allocator);
     defer stack.deinit();
 
     _ = try stack.replaceGameplay(TestingState, .{ .update_count = &bottom_updates });
     const modal_handle = try stack.pushModal(TestingState, .{ .update_count = &top_updates });
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
     try std.testing.expectEqual(@as(u32, 0), bottom_updates);
     try std.testing.expectEqual(@as(u32, 1), top_updates);
 
     try std.testing.expect(stack.remove(modal_handle));
     _ = try stack.pushOverlay(TestingState, .{ .update_count = &top_updates });
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
     try std.testing.expectEqual(@as(u32, 1), bottom_updates);
     try std.testing.expectEqual(@as(u32, 2), top_updates);
 }
@@ -1063,11 +1069,13 @@ test "queued transition from update waits until applyTransitions" {
     defer transitions.deinit();
     var threads = try initTestThreadSystem();
     defer threads.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
     var stack = StateStack.init(std.testing.allocator);
     defer stack.deinit();
 
     _ = try stack.replaceGameplay(QueuingState, .{});
-    try stack.update(testUpdateContext(&InputState{}, 0.0, &transitions, &threads));
+    try stack.update(testUpdateContext(&InputState{}, &audio, 0.0, &transitions, &threads));
 
     try std.testing.expectEqual(@as(usize, 1), stack.len());
     try std.testing.expectEqual(@as(usize, 1), transitions.requests.items.len);

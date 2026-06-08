@@ -16,14 +16,14 @@ Use the existing docs as source of truth for deeper details:
 ## Ownership Boundaries
 
 - `src/main.zig` owns the executable entry point and high-level fixed-step timing loop.
-- `src/app/` owns SDL app coordination, input, time loop, frame pacing, pause policy, state stack flow, and the thread system.
+- `src/app/` owns SDL app coordination, input, time loop, frame pacing, pause policy, state stack flow, audio service, and the thread system.
 - `src/render/` owns SDL_GPU rendering, camera transforms, renderer resources, text, FPS/debug overlay, and frame submission.
 - `src/game/` owns game/application states, gameplay behavior, `DataSystem`, and ECS-style gameplay systems/processors.
 - `src/platform/` owns SDL C imports, small platform wrappers, and GPU smoke-test implementation.
 - `src/assets/` owns runtime asset path resolution and safe installed asset loading.
 - `src/core/` owns small shared helpers such as math primitives.
 - `src/root.zig` is the minimal test/root file for math aliases and compile coverage.
-- `assets/` contains runtime assets and shader sources. Runtime assets install under `zig-out/bin/assets` by default.
+- `assets/` contains runtime assets, audio files, and shader sources. Runtime assets install under `zig-out/bin/assets` by default.
 
 Add new code under the matching owner directory. Keep executable-only code near
 `main.zig`, app flow under `src/app/`, rendering and GPU resource code under
@@ -35,6 +35,8 @@ Add new code under the matching owner directory. Keep executable-only code near
 - `StateStack` owns state lifetimes, state destruction, policies, and transition application.
 - Queue state transitions through `StateTransitions` from state dispatch, then apply them after dispatch completes.
 - Game states draw through `Renderer`; keep SDL_GPU device, swapchain, shader, texture, and command submission details in render/platform layers.
+- Game states request sound through `AudioCommandBuffer`; keep SDL_mixer
+  device, mixer, track, bus, and loaded-audio ownership in the app audio service.
 - Map raw input to named actions. Keep held gameplay input in `InputState` separate from one-frame app commands in `FrameCommands`.
 - Let stack policies decide whether lower states receive update, input, or render passes.
 - Treat `DataSystem` as the persistent gameplay data owner and ECS storage foundation:
@@ -45,13 +47,14 @@ Add new code under the matching owner directory. Keep executable-only code near
 - Keep hot ECS component data in dense SoA columns. Component masks are for
   membership/query decisions, not a replacement for direct slice iteration in
   hot processors.
-- Keep state transitions, entity structural changes, SDL/GPU calls, asset
-  loading, save/load streaming, and renderer resource ownership out of threaded
-  SIMD processors unless an explicit deferred/main-thread boundary is designed.
+- Keep state transitions, entity structural changes, SDL/GPU/audio calls, asset
+  loading, save/load streaming, renderer resource ownership, and mixer resource
+  ownership out of threaded SIMD processors unless an explicit
+  deferred/main-thread boundary is designed.
 - Keep debug UI state in the debug overlay path, not in gameplay state.
 - Keep runtime asset paths relative and traversal-safe.
 - Use core SDL3 PNG loading for textures. Do not add `SDL3_image` unless that dependency is explicitly chosen.
-- SDL3 and SDL3_ttf are system dependencies; avoid vendoring or half-adopting external dependencies.
+- SDL3, SDL3_ttf, and SDL3_mixer are system dependencies; avoid vendoring or half-adopting external dependencies.
 - Pair SDL resource creation with cleanup close to the creation site.
 - Treat performance as a correctness constraint in hot paths: fixed-step update,
   input dispatch, render submission, asset lookup, and text/debug overlay.

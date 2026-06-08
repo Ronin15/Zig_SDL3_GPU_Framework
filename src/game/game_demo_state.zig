@@ -8,6 +8,7 @@ const std = @import("std");
 const data_mod = @import("data_system.zig");
 const DataSystem = data_mod.DataSystem;
 const EntityId = data_mod.EntityId;
+const AudioCommandBuffer = @import("../app/audio.zig").AudioCommandBuffer;
 const InputState = @import("../app/input.zig").InputState;
 const Player = @import("player.zig").Player;
 const CollisionSystem = @import("systems/collision.zig").CollisionSystem;
@@ -23,6 +24,10 @@ const c = @import("../platform/sdl.zig").c;
 
 const test_square_count = 4;
 const obstacle_count = 2;
+const collision_sfx_cooldown_capacity = 32;
+const collision_sfx_cooldown_seconds: f32 = 0.14;
+const demo_music_path = "audio/music/demo_loop.wav";
+const collision_sfx_path = "audio/sfx/collision.wav";
 
 pub const GameDemoState = struct {
     data: DataSystem,
@@ -34,6 +39,9 @@ pub const GameDemoState = struct {
     particles: ParticleSystem,
     test_squares: [test_square_count]EntityId,
     obstacles: [obstacle_count]EntityId,
+    collision_sfx_cooldowns: [collision_sfx_cooldown_capacity]CollisionSfxCooldown = undefined,
+    collision_sfx_cooldown_count: usize = 0,
+    music_started: bool = false,
     bounds_width: f32 = 800,
     bounds_height: f32 = 450,
 
@@ -86,6 +94,7 @@ pub const GameDemoState = struct {
         self.simulation_frame.beginStep();
         self.simulation_frame.phase = .main_thread_inputs;
         try self.player.applyInput(&self.data, context.input);
+        self.queueAmbientAudio(context.audio);
 
         self.simulation_frame.phase = .processors;
         var movement_slice = self.data.movementBodySlice();
@@ -94,6 +103,7 @@ pub const GameDemoState = struct {
         try self.player.clampToBounds(&self.data, self.bounds_width, self.bounds_height);
         _ = try self.collision.update(&self.data, &self.simulation_frame.contacts, context.thread_system, .{});
         _ = try self.collision_response.update(&self.data, &self.simulation_frame);
+        self.queueCollisionAudio(context.audio, context.delta_seconds);
         self.emitPlayerTrail();
         _ = self.particles.update(context.thread_system, context.delta_seconds, .{});
 
@@ -151,6 +161,105 @@ pub const GameDemoState = struct {
             .end_color = .{ .r = 0.95, .g = 0.24, .b = 0.18, .a = 0.0 },
             .layer = 0,
         });
+    }
+
+    fn queueAmbientAudio(self: *GameDemoState, audio: *AudioCommandBuffer) void {
+        if (!self.music_started) {
+            audio.playMusic(.{
+                .path = demo_music_path,
+                .gain = 1.0,
+                .loop = true,
+                .fade_in_ms = 750,
+            }) catch return;
+            self.music_started = true;
+        }
+
+        if (self.data.movementBodyConst(self.player.entity)) |body| {
+            audio.setListener(.{ .x = body.position.x + 16, .y = body.position.y + 16 }) catch {};
+        }
+    }
+
+    fn queueCollisionAudio(self: *GameDemoState, audio: *AudioCommandBuffer, delta_seconds: f32) void {
+        self.tickCollisionSfxCooldowns(delta_seconds);
+        for (self.simulation_frame.contacts.mergedItems()) |contact| {
+            if (self.collisionPairOnCooldown(contact.a, contact.b)) continue;
+            const position = self.contactAudioPosition(contact) orelse continue;
+            const gain = std.math.clamp(contact.penetration / 18.0, 0.25, 1.0);
+            audio.playSfx(.{
+                .path = collision_sfx_path,
+                .gain = gain,
+                .priority = 180,
+                .position = position,
+            }) catch |err| switch (err) {
+                error.AudioCommandLimitReached => break,
+                else => continue,
+            };
+            self.addCollisionSfxCooldown(contact.a, contact.b);
+        }
+    }
+
+    fn contactAudioPosition(self: *const GameDemoState, contact: @import("simulation.zig").CollisionContact) ?math.Vec2 {
+        const a = self.data.movementBodyConst(contact.a) orelse return null;
+        const b = self.data.movementBodyConst(contact.b) orelse return null;
+        return .{
+            .x = (a.position.x + b.position.x) * 0.5,
+            .y = (a.position.y + b.position.y) * 0.5,
+        };
+    }
+
+    fn tickCollisionSfxCooldowns(self: *GameDemoState, delta_seconds: f32) void {
+        var index: usize = 0;
+        while (index < self.collision_sfx_cooldown_count) {
+            self.collision_sfx_cooldowns[index].remaining_seconds -= delta_seconds;
+            if (self.collision_sfx_cooldowns[index].remaining_seconds <= 0) {
+                self.collision_sfx_cooldown_count -= 1;
+                self.collision_sfx_cooldowns[index] = self.collision_sfx_cooldowns[self.collision_sfx_cooldown_count];
+            } else {
+                index += 1;
+            }
+        }
+    }
+
+    fn collisionPairOnCooldown(self: *const GameDemoState, a: EntityId, b: EntityId) bool {
+        const key = CollisionSfxCooldown.keyFor(a, b);
+        for (self.collision_sfx_cooldowns[0..self.collision_sfx_cooldown_count]) |cooldown| {
+            if (cooldown.key == key) return true;
+        }
+        return false;
+    }
+
+    fn addCollisionSfxCooldown(self: *GameDemoState, a: EntityId, b: EntityId) void {
+        const key = CollisionSfxCooldown.keyFor(a, b);
+        if (self.collision_sfx_cooldown_count < self.collision_sfx_cooldowns.len) {
+            self.collision_sfx_cooldowns[self.collision_sfx_cooldown_count] = .{
+                .key = key,
+                .remaining_seconds = collision_sfx_cooldown_seconds,
+            };
+            self.collision_sfx_cooldown_count += 1;
+            return;
+        }
+
+        self.collision_sfx_cooldowns[0] = .{
+            .key = key,
+            .remaining_seconds = collision_sfx_cooldown_seconds,
+        };
+    }
+};
+
+const CollisionSfxCooldown = struct {
+    key: u64,
+    remaining_seconds: f32,
+
+    fn keyFor(a: EntityId, b: EntityId) u64 {
+        const a_id = entityAudioKey(a);
+        const b_id = entityAudioKey(b);
+        const low = @min(a_id, b_id);
+        const high = @max(a_id, b_id);
+        return low ^ std.math.rotl(u64, high, 32);
+    }
+
+    fn entityAudioKey(entity: EntityId) u64 {
+        return (@as(u64, entity.generation) << 32) | entity.index;
     }
 };
 
@@ -321,6 +430,8 @@ test "demo owns and completes a simulation frame during update" {
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);
     defer transitions.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
     var input = InputState{};
     input.setHeld(.moveRight, true);
     const player_before = demo.data.movementBodyConst(demo.player.entity).?;
@@ -331,6 +442,7 @@ test "demo owns and completes a simulation frame during update" {
 
     try demo.update(.{
         .input = &input,
+        .audio = &audio,
         .delta_seconds = 0.016,
         .transitions = &transitions,
         .thread_system = &threads,
@@ -346,6 +458,8 @@ test "demo owns and completes a simulation frame during update" {
         try std.testing.expect(body.position.x != square_before[index].x or body.position.y != square_before[index].y);
     }
     try std.testing.expect(demo.particles.activeCount() > 0);
+    try std.testing.expect(demo.music_started);
+    try std.testing.expect(audio.len() >= 2);
 }
 
 test "demo collision response blocks player against obstacles" {
@@ -361,6 +475,8 @@ test "demo collision response blocks player against obstacles" {
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);
     defer transitions.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
 
     const obstacle = demo.obstacles[0];
     const obstacle_body = demo.data.movementBodyConst(obstacle).?;
@@ -374,6 +490,7 @@ test "demo collision response blocks player against obstacles" {
 
     try demo.update(.{
         .input = &input,
+        .audio = &audio,
         .delta_seconds = 0.016,
         .transitions = &transitions,
         .thread_system = &threads,
@@ -382,6 +499,7 @@ test "demo collision response blocks player against obstacles" {
     const player_after = demo.data.movementBodyConst(demo.player.entity).?;
     try std.testing.expect(demo.simulation_frame.contacts.mergedItems().len > 0);
     try std.testing.expect(player_after.position.x <= obstacle_body.position.x - 32);
+    try std.testing.expect(audio.len() > 2);
 }
 
 test "demo collision response handles player contacts with moving entities" {
@@ -397,6 +515,8 @@ test "demo collision response handles player contacts with moving entities" {
     defer threads.deinit();
     var transitions = StateTransitions.init(std.testing.allocator);
     defer transitions.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
 
     const square = demo.test_squares[0];
     for (demo.test_squares[1..], 0..) |other, index| {
@@ -430,6 +550,7 @@ test "demo collision response handles player contacts with moving entities" {
 
     try demo.update(.{
         .input = &InputState{},
+        .audio = &audio,
         .delta_seconds = 0.016,
         .transitions = &transitions,
         .thread_system = &threads,

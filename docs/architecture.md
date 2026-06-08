@@ -9,7 +9,9 @@ game-specific behavior under `src/game/`.
 - `src/main.zig` creates `AppConfig`, initializes `Engine`, and runs the fixed-step loop.
 - `src/config.zig` defines app configuration, presentation options, clear color,
   and thread-system defaults shared by build options and runtime startup.
-- `src/app/engine.zig` coordinates SDL app flow, the window, asset cache, text service, renderer, state stack, pause controller, input, debug overlay, and thread system.
+- `src/app/engine.zig` coordinates SDL app flow, the window, asset cache, audio service, text service, renderer, state stack, pause controller, input, debug overlay, and thread system.
+- `src/app/audio.zig` owns SDL3_mixer lifecycle, app-level audio tracks,
+  loaded audio assets, bus gains, and the fixed-step audio command buffer.
 - `src/app/input.zig` owns named actions, held gameplay input, and one-frame app/debug commands.
 - `src/app/input_router.zig` applies state-policy action contexts before input mutates `InputState` or `FrameCommands`.
 - `src/app/time_loop.zig` keeps simulation fixed at 60Hz.
@@ -35,8 +37,11 @@ game-specific behavior under `src/game/`.
   in a fixed-capacity SoA pool with serial or threaded SIMD-aware updates.
 - `src/gpu_smoke.zig` is the GPU smoke executable entry point, while
   `src/platform/gpu_smoke_impl.zig` owns the display-gated SDL_GPU probe.
-- `src/platform/sdl.zig` contains shared SDL C imports and small SDL wrappers.
+- `src/platform/sdl.zig` contains shared SDL, SDL_ttf, and SDL_mixer C imports
+  plus small SDL wrappers.
 - `src/assets/assets.zig` resolves safe runtime asset paths, and `src/assets/cache.zig` caches renderer-backed runtime assets.
+  Audio assets live under `assets/audio/` and are resolved through the same
+  traversal-safe asset root.
 - `src/core/math.zig` and `src/core/simd.zig` contain small shared math and portable SIMD helpers.
 - `src/core/logging.zig` owns scoped logging categories and build-option-driven log filtering.
 - `src/root.zig` stays minimal for math aliases and compile coverage.
@@ -51,7 +56,8 @@ game-specific behavior under `src/game/`.
    engine and state stack.
 3. Apply pause and frame visibility policy.
 4. Run fixed 60Hz updates while the time accumulator needs them.
-5. Render with interpolation between fixed updates.
+5. Drain queued audio commands on the main thread after each fixed update.
+6. Render with interpolation between fixed updates.
 
 The runtime call path is `main.zig` -> `Engine` phase method -> `StateStack`
 policy dispatch -> eligible state or states. `main.zig` does not call gameplay
@@ -88,6 +94,15 @@ resource handles. Retained `TextureId` leases and text texture leases belong to
 setup, state transitions, or owner shutdown paths; hot render paths should keep
 drawing with retained IDs rather than performing asset or text lookup.
 
+Game states request SFX and music through `AudioCommandBuffer` in
+`UpdateContext`. `AudioService` is app-owned because SDL_mixer device, mixer,
+track pool, loaded-audio cache, bus gains, and pause ducking are process-level
+runtime services. States choose what sound to request; they do not own
+`MIX_Mixer`, `MIX_Track`, or loaded `MIX_Audio` handles. `Engine` drains audio
+commands on the main thread after fixed-step state updates and state transition
+application. Gameplay pause stops active SFX and ducks music; resume restores
+music gain.
+
 Raw keyboard input maps to named actions in `src/app/input.zig`.
 `input_router.zig` applies the active state stack's action contexts before
 mutating held gameplay actions in `InputState` or one-frame app/debug commands
@@ -103,9 +118,9 @@ current dispatch completes.
 
 `AppConfig` is the runtime contract for app metadata, asset root, resolution
 policy, window flags, GPU validation, frames in flight, present mode, clear
-color, and thread-system settings. `src/main.zig` builds it from generated build
-options, then `Engine` validates it before creating SDL, renderer, asset, text,
-state, pause, input, and thread-system services.
+color, audio settings, and thread-system settings. `src/main.zig` builds it from
+generated build options, then `Engine` validates it before creating SDL,
+renderer, asset, audio, text, state, pause, input, and thread-system services.
 
 Logging uses scoped `std.log` categories from `src/core/logging.zig`, with the
 default log level chosen from build options. Diagnostics should explain startup,
@@ -174,9 +189,9 @@ failures do not partially apply a command batch.
 Update processors receive typed slices or views from `DataSystem` during
 fixed-step updates instead of broad structural access. Render systems read
 immutable `DataSystem` slices during state render and submit draw calls through
-`Renderer`. `DataSystem` does not own SDL handles, GPU handles, live renderer
-texture IDs, asset leases, input frame state, thread-system state, transient
-events, or scratch buffers.
+`Renderer`. `DataSystem` does not own SDL handles, GPU handles, SDL_mixer
+handles, live renderer texture IDs, asset leases, audio command buffers, input
+frame state, thread-system state, transient events, or scratch buffers.
 
 `MovementSystem` updates movement-body slices as an ordered gameplay data
 processor, using SIMD lanes inside each assigned range and

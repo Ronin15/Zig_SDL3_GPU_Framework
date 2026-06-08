@@ -24,12 +24,45 @@ pub const AppConfig = struct {
     present_mode: PresentMode = .vsync,
     clear_color: Color = .{ .r = 0.071, .g = 0.125, .b = 0.173, .a = 1.0 },
     threading: ThreadSystemConfig = .{},
+    audio: AudioConfig = .{},
 
     pub fn validate(self: AppConfig) !void {
         try self.resolution_policy.validate();
+        try self.audio.validate();
         if (self.frames_in_flight < 1 or self.frames_in_flight > 3) {
             return error.InvalidConfig;
         }
+    }
+};
+
+pub const AudioConfig = struct {
+    enabled: bool = true,
+    max_sfx_tracks: u32 = 16,
+    max_commands_per_step: u32 = 32,
+    master_gain: f32 = 1.0,
+    sfx_gain: f32 = 0.85,
+    music_gain: f32 = 0.55,
+    paused_music_gain: f32 = 0.22,
+    spatial_units_per_meter: f32 = 96.0,
+
+    pub fn validate(self: AudioConfig) !void {
+        if (self.max_sfx_tracks == 0 or self.max_commands_per_step == 0) {
+            return error.InvalidAudioConfig;
+        }
+        if (!gainIsValid(self.master_gain) or
+            !gainIsValid(self.sfx_gain) or
+            !gainIsValid(self.music_gain) or
+            !gainIsValid(self.paused_music_gain))
+        {
+            return error.InvalidAudioConfig;
+        }
+        if (!std.math.isFinite(self.spatial_units_per_meter) or self.spatial_units_per_meter <= 0) {
+            return error.InvalidAudioConfig;
+        }
+    }
+
+    fn gainIsValid(value: f32) bool {
+        return std.math.isFinite(value) and value >= 0 and value <= 1;
     }
 };
 
@@ -68,4 +101,12 @@ test "app config validation rejects invalid frame latency" {
         .window_title = "test",
         .frames_in_flight = 4,
     }).validate());
+}
+
+test "audio config validation rejects invalid values" {
+    try std.testing.expectError(error.InvalidAudioConfig, (AudioConfig{ .max_sfx_tracks = 0 }).validate());
+    try std.testing.expectError(error.InvalidAudioConfig, (AudioConfig{ .max_commands_per_step = 0 }).validate());
+    try std.testing.expectError(error.InvalidAudioConfig, (AudioConfig{ .master_gain = -0.1 }).validate());
+    try std.testing.expectError(error.InvalidAudioConfig, (AudioConfig{ .sfx_gain = 1.1 }).validate());
+    try std.testing.expectError(error.InvalidAudioConfig, (AudioConfig{ .spatial_units_per_meter = 0 }).validate());
 }

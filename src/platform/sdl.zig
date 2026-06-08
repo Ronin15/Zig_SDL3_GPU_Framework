@@ -9,6 +9,7 @@ const log = logging.platform;
 pub const c = @cImport({
     @cInclude("SDL3/SDL.h");
     @cInclude("SDL3_ttf/SDL_ttf.h");
+    @cInclude("SDL3_mixer/SDL_mixer.h");
 });
 
 pub const SdlContext = struct {

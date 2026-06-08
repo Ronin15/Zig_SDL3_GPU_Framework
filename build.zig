@@ -190,6 +190,7 @@ fn createSdlModule(
     mod.addOptions("build_options", build_options);
     mod.linkSystemLibrary("SDL3", .{});
     mod.linkSystemLibrary("SDL3_ttf", .{});
+    mod.linkSystemLibrary("SDL3_mixer", .{});
     return mod;
 }
 

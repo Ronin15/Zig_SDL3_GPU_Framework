@@ -227,7 +227,7 @@ per-system AdaptiveWorkTuner to select the range/worker profile for
 parallelForWithOptions (range-aligned), and appends MovementIntent ranges via
 `SimulationFrame.intents` (count/prefix/write). Wander amplitude and seek
 (player-targeted via AiConfig.seek_target from previous_position +
-main-thread precomputed sep + direct dense gather via entity_to_mov table)
+main-thread precomputed sep + `DataSystem` dense movement lookup)
 prove non-player entities are driven by persistent data + processor intents, not
 hardcoded velocities. Consumption (main-thread, before MovementSystem) writes
 velocities from intent dir * speed using MovementBodyPtr; player remains

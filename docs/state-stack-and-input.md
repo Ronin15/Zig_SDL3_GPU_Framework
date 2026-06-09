@@ -67,11 +67,17 @@ current dispatch finishes:
 
 ```zig
 try context.transitions.replaceGameplay(MainMenuState, MainMenuState.init());
+try context.transitions.replaceOwnedGameplay(owned_state);
 try context.transitions.pushModal(PauseMenuState, PauseMenuState.init());
 try context.transitions.pushOverlay(HudState, HudState.init());
 try context.transitions.pushOpaque(LoadingState, LoadingState.init());
 try context.transitions.quit();
 ```
+
+Use `replaceOwnedState` / `replaceOwnedGameplay` only when a state has to be
+allocated before the transition can be enqueued, such as a fallible gameplay
+launch from a menu. Ownership transfers to `StateTransitions`; if enqueueing
+fails, the transition API destroys the owned state.
 
 Use `StateStack` directly only in app/bootstrap code, such as replacing the
 startup state in `src/app/engine.zig`.
@@ -113,9 +119,11 @@ The top state controls command availability. Held gameplay input is also gated
 by modal and opaque states in the active event path, so pass-through overlays do
 not tunnel movement through a modal state beneath them.
 
-`.pause` / `.resumeGame` remain routable under modal and opaque policies (intentionally, to support
-P/Enter/Space resume when the pause overlay is the top modal, and Esc/quit flows inside menus).
-The gameplay flag gate in the controller makes a pause command from a non-gameplay top a safe no-op.
+`.pause` / `.resumeGame` remain routable under modal and opaque policies
+(intentionally, to support P/Enter/Space resume when the pause overlay is the
+top modal). Menu states consume their handled raw events, so those events do not
+also produce global frame commands. The gameplay flag gate in the controller
+makes any non-gameplay pause attempt a safe no-op.
 
 ## Input Model
 
@@ -160,20 +168,10 @@ to `events_below`; input routing only decides whether named actions mutate
 `InputState` or `FrameCommands`.
 
 Menu states (e.g. main menu as an opaque screen, settings as a modal overlay)
-typically read `context.commands.wasPressed(.resumeGame)` for confirm and
-`.quit` for back/quit-app, plus the explicit menu nav actions. They use
-`context.transitions.pop()` (added alongside Slice 16) or `quit()` / `replaceGameplay(...)`.
-
-Default bindings are:
-
-- WASD for movement
-- P for pause or resume
-- Enter or Space for resume
-- Escape for quit
-- F2 for the debug overlay
-
-Gameplay code should read movement through `InputState`, usually from the
-`UpdateContext`. App-level commands should stay in `FrameCommands` and engine
-coordination code. `State.handleEvent` still receives raw SDL events according
-to `events_below`; input routing only decides whether named actions mutate
-`InputState` or `FrameCommands`.
+receive raw key-down events in `handleEvent`, translate them through
+`input.actionForKey(...)`, and act on named `Action` values for confirm, back,
+and navigation. They use `context.transitions.pop()` (added alongside Slice 16)
+or `quit()` / `replaceOwnedGameplay(...)`. When a state returns `true` from
+`handleEvent`, `Engine` does not route that same event into global `FrameCommands`,
+so menu Enter/Escape handling does not also resume/pause/quit through the app
+command path.

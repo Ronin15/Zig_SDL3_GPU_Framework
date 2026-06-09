@@ -6,7 +6,7 @@
 //! Stateless (except work memory + per-system tuner); reads typed const slices for ai + movement prior positions,
 //! appends MovementIntent ranges to SimulationFrame.intents using RangeOutputStream count/prefix/write + parallelForWithOptions.
 //! Deterministic via explicit seed in config. Wander + seek (player-targeted via AiConfig.seek_target) + local separation.
-//! Gather is now direct dense O(ai+mov) using main-thread index table (no nested linear search).
+//! Gather uses DataSystem dense-index lookup, so cost is bounded by live AI rows.
 //! Separation precomputed once on main thread (Hot lists), O(1) read in workers (no O(N^2) in jobs).
 //! decideDir pure base; applySeparationAndNormalize shared (no logic dup). Serial fallback + threaded identical.
 //! Serial/main-only clamp for AI squares (math.clamp consistent with player, vel zero for AI decision rate).
@@ -24,6 +24,7 @@ const alignItemCount = @import("../../app/thread_system.zig").alignItemCount;
 const rangeCount = @import("../../app/thread_system.zig").rangeCount;
 const ConstAiAgentSlice = @import("../data_system.zig").ConstAiAgentSlice;
 const ConstMovementBodySlice = @import("../data_system.zig").ConstMovementBodySlice;
+const DataSystem = @import("../data_system.zig").DataSystem;
 const EntityId = @import("../data_system.zig").EntityId;
 const AiAgent = @import("../data_system.zig").AiAgent;
 const AiBehavior = @import("../data_system.zig").AiBehavior;
@@ -69,9 +70,6 @@ pub const AiSystem = struct {
     // Eliminates per-item O(N) scans inside jobs (was quadratic total in worker path).
     sep_x: HotF32List = .empty,
     sep_y: HotF32List = .empty,
-    // Main-thread gather aid: dense index -> movement dense mi for O(1) direct lookup (entity.index unique among live).
-    // Avoids nested linear search (was O(ai*movement) per gather). Table reset/grown per gather; no per-item scans.
-    entity_to_mov: std.ArrayList(usize) = .empty,
     adaptive_tuner: AdaptiveWorkTuner = AdaptiveWorkTuner.init(.{}),
 
     pub fn init(allocator: std.mem.Allocator) AiSystem {
@@ -82,7 +80,6 @@ pub const AiSystem = struct {
     }
 
     pub fn deinit(self: *AiSystem) void {
-        self.entity_to_mov.deinit(self.allocator);
         self.sep_y.deinit(self.allocator);
         self.sep_x.deinit(self.allocator);
         self.seek_weights.deinit(self.allocator);
@@ -98,13 +95,14 @@ pub const AiSystem = struct {
         self: *AiSystem,
         ai_agents: ConstAiAgentSlice,
         movement: ConstMovementBodySlice,
+        data: *const DataSystem,
         frame: *SimulationFrame,
         thread_system: *ThreadSystem,
         delta_seconds: f32,
         config: AiConfig,
     ) !AiStats {
         _ = delta_seconds; // decisions are instantaneous; integration in movement
-        try self.gatherAiData(ai_agents, movement);
+        try self.gatherAiData(ai_agents, movement, data);
         const entity_count = self.entities.items.len;
         if (entity_count == 0) {
             // No ai this step; do not touch caller's stream (other emitters may use intents).
@@ -209,12 +207,13 @@ pub const AiSystem = struct {
         self: *AiSystem,
         ai_agents: ConstAiAgentSlice,
         movement: ConstMovementBodySlice,
+        data: *const DataSystem,
         frame: *SimulationFrame,
         delta_seconds: f32,
         config: AiConfig,
     ) !AiStats {
         _ = delta_seconds;
-        try self.gatherAiData(ai_agents, movement);
+        try self.gatherAiData(ai_agents, movement, data);
         const entity_count = self.entities.items.len;
         if (entity_count == 0) return .{};
         self.computeAiSeparations(); // main-thread only; O(N^2) here (small N) not inside serial loop.
@@ -257,7 +256,7 @@ pub const AiSystem = struct {
         };
     }
 
-    fn gatherAiData(self: *AiSystem, ai_slice: ConstAiAgentSlice, movement: ConstMovementBodySlice) !void {
+    fn gatherAiData(self: *AiSystem, ai_slice: ConstAiAgentSlice, movement: ConstMovementBodySlice, data: *const DataSystem) !void {
         self.clearWork();
         const n = ai_slice.entities.len;
         if (n == 0) return;
@@ -270,47 +269,18 @@ pub const AiSystem = struct {
         try self.sep_x.ensureTotalCapacity(self.allocator, n);
         try self.sep_y.ensureTotalCapacity(self.allocator, n);
 
-        // Direct dense gather (O(ai + movement) total, fixed not quadratic): use entity.index (unique among live)
-        // as key into transient index->mi table (main-thread only). Preserves ai order for determinism.
-        var max_idx: u32 = 0;
-        for (ai_slice.entities) |ent| {
-            if (ent.index > max_idx) max_idx = ent.index;
-        }
-        for (movement.entities) |me| {
-            if (me.index > max_idx) max_idx = me.index;
-        }
-        const need: usize = @as(usize, max_idx) + 1;
-        try self.entity_to_mov.ensureTotalCapacity(self.allocator, need);
-        // Reset only the prefix we will use (linear in peak live indices, fine; sentinel = maxInt).
-        const sentinel = std.math.maxInt(usize);
-        while (self.entity_to_mov.items.len < need) {
-            self.entity_to_mov.appendAssumeCapacity(sentinel);
-        }
-        for (self.entity_to_mov.items[0..need]) |*v| v.* = sentinel;
-
-        // One pass: record movement dense index by entity index.
-        for (movement.entities, 0..) |me, mi| {
-            if (me.index < need) {
-                self.entity_to_mov.items[me.index] = mi;
-            }
-        }
-
-        // Second pass: for each ai (in ai order), direct lookup pos via table, append in ai order.
+        // Preserve ai order for deterministic output. DataSystem rejects stale generations
+        // and returns direct dense movement rows without transient high-water index tables.
         for (ai_slice.entities, 0..) |ent, i| {
-            if (ent.index < need) {
-                const mi = self.entity_to_mov.items[ent.index];
-                if (mi != sentinel) {
-                    // Live match at snapshot time: indices unique => gens align for these live slices.
-                    self.entities.appendAssumeCapacity(ent);
-                    self.pos_x.appendAssumeCapacity(movement.previous_x[mi]);
-                    self.pos_y.appendAssumeCapacity(movement.previous_y[mi]);
-                    self.behaviors.appendAssumeCapacity(ai_slice.behaviors[i]);
-                    self.wander_amplitudes.appendAssumeCapacity(ai_slice.wander_amplitudes[i]);
-                    self.seek_weights.appendAssumeCapacity(ai_slice.seek_weights[i]);
-                    self.sep_x.appendAssumeCapacity(0);
-                    self.sep_y.appendAssumeCapacity(0);
-                }
-            }
+            const mi = data.movementBodyDenseIndex(ent) orelse continue;
+            self.entities.appendAssumeCapacity(ent);
+            self.pos_x.appendAssumeCapacity(movement.previous_x[mi]);
+            self.pos_y.appendAssumeCapacity(movement.previous_y[mi]);
+            self.behaviors.appendAssumeCapacity(ai_slice.behaviors[i]);
+            self.wander_amplitudes.appendAssumeCapacity(ai_slice.wander_amplitudes[i]);
+            self.seek_weights.appendAssumeCapacity(ai_slice.seek_weights[i]);
+            self.sep_x.appendAssumeCapacity(0);
+            self.sep_y.appendAssumeCapacity(0);
         }
     }
 
@@ -323,7 +293,6 @@ pub const AiSystem = struct {
         self.seek_weights.clearRetainingCapacity();
         self.sep_x.clearRetainingCapacity();
         self.sep_y.clearRetainingCapacity();
-        self.entity_to_mov.clearRetainingCapacity();
     }
 
     /// Compute pairwise local separation contributions once on the main thread after
@@ -406,16 +375,7 @@ fn decideDir(
         dx += w.x * wander_strength;
         dy += w.y * wander_strength;
     }
-    const len2 = dx * dx + dy * dy;
-    if (len2 > 0.0001) {
-        const il = 1.0 / @sqrt(len2);
-        dx *= il;
-        dy *= il;
-    } else {
-        dx = 1;
-        dy = 0;
-    }
-    return .{ .x = dx, .y = dy };
+    return normalizeOrDefault(dx, dy);
 }
 
 /// Shared post-decide blend + normalize for separation contribution (precomputed on main).
@@ -429,16 +389,18 @@ fn applySeparationAndNormalize(base: AiDir, sx: f32, sy: f32) AiDir {
         dx = dx * 0.55 + sx * sep_strength * 0.45;
         dy = dy * 0.55 + sy * sep_strength * 0.45;
     }
+    return normalizeOrDefault(dx, dy);
+}
+
+fn normalizeOrDefault(dx: f32, dy: f32) AiDir {
+    if (!std.math.isFinite(dx) or !std.math.isFinite(dy)) return .{ .x = 1, .y = 0 };
     const len2 = dx * dx + dy * dy;
-    if (len2 > 0.0001) {
-        const il = 1.0 / @sqrt(len2);
-        dx *= il;
-        dy *= il;
-    } else {
-        dx = 1;
-        dy = 0;
-    }
-    return .{ .x = dx, .y = dy };
+    if (!std.math.isFinite(len2) or len2 <= 0.0001) return .{ .x = 1, .y = 0 };
+    const inv_len = 1.0 / @sqrt(len2);
+    const nx = dx * inv_len;
+    const ny = dy * inv_len;
+    if (!std.math.isFinite(nx) or !std.math.isFinite(ny)) return .{ .x = 1, .y = 0 };
+    return .{ .x = nx, .y = ny };
 }
 
 fn deterministicUnitDir(seed: u64, key: u32) AiDir {
@@ -528,7 +490,7 @@ test "ai processor emits deterministic MovementIntent for same seed" {
     frame.beginStep();
     var ai_sys = AiSystem.init(std.testing.allocator);
     defer ai_sys.deinit();
-    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &frame, 0.016, .{ .intent_seed = 0x12345678 });
+    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &data, &frame, 0.016, .{ .intent_seed = 0x12345678 });
     const serial_intents = frame.intents.mergedItems();
     try std.testing.expectEqual(@as(usize, 2), serial_intents.len);
     try std.testing.expectEqual(e0.index, serial_intents[0].movement.entity.index); // order by append in gather (stable)
@@ -538,7 +500,7 @@ test "ai processor emits deterministic MovementIntent for same seed" {
     frame.beginStep();
     var threads0 = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{ .max_worker_threads = 0 });
     defer threads0.deinit();
-    _ = try ai_sys.update(ai_slice, movement_slice, &frame, &threads0, 0.016, .{ .intent_seed = 0x12345678, .max_worker_threads = 0 });
+    _ = try ai_sys.update(ai_slice, movement_slice, &data, &frame, &threads0, 0.016, .{ .intent_seed = 0x12345678, .max_worker_threads = 0 });
     const t0_intents = frame.intents.mergedItems();
     try std.testing.expectEqual(serial_intents.len, t0_intents.len);
     try std.testing.expectEqual(serial_intents[0].movement.direction_x, t0_intents[0].movement.direction_x);
@@ -547,7 +509,7 @@ test "ai processor emits deterministic MovementIntent for same seed" {
 
     // Different seed produces different (or at least reproducible other) dirs
     frame.beginStep();
-    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &frame, 0.016, .{ .intent_seed = 0xdeadbeef });
+    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &data, &frame, 0.016, .{ .intent_seed = 0xdeadbeef });
     const other = frame.intents.mergedItems();
     // Not strictly required different but for coverage; allow equal only if degenerate
     _ = other;
@@ -575,7 +537,7 @@ test "ai processor appends movement intents without clearing existing stream out
 
     var ai_sys = AiSystem.init(std.testing.allocator);
     defer ai_sys.deinit();
-    const stats = try ai_sys.updateSerial(data.aiAgentSliceConst(), data.movementBodySliceConst(), &frame, 0.016, .{ .intent_seed = 2 });
+    const stats = try ai_sys.updateSerial(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &frame, 0.016, .{ .intent_seed = 2 });
 
     const intents = frame.intents.mergedItems();
     try std.testing.expectEqual(@as(usize, 1), stats.intent_count);
@@ -624,7 +586,7 @@ test "ai processor uses adaptive profile selection with default thread worker co
         .items_per_range = ai_range_alignment_items,
     };
 
-    const stats = try ai_sys.update(data.aiAgentSliceConst(), data.movementBodySliceConst(), &frame, &threads, 0.016, .{
+    const stats = try ai_sys.update(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &frame, &threads, 0.016, .{
         .adaptive_tuner = &adaptive_tuner,
         .intent_seed = 3,
     });
@@ -641,6 +603,12 @@ test "wander amplitude scales steering perturbation against seek" {
     try std.testing.expectEqual(@as(f32, 0), pure_seek.y);
     try std.testing.expect(@abs(strong_wander.y) > @abs(weak_wander.y));
     try std.testing.expect(strong_wander.x != weak_wander.x or strong_wander.y != weak_wander.y);
+}
+
+test "ai direction normalization falls back for overflowed finite parameters" {
+    const dir = decideDir(.seek, 0, 0, 1, 0, std.math.floatMax(f32), std.math.floatMax(f32), 0x1234, 44);
+    try std.testing.expect(std.math.isFinite(dir.x));
+    try std.testing.expect(std.math.isFinite(dir.y));
 }
 
 test "ai processor no steady-state allocation (FailingAllocator)" {
@@ -666,11 +634,48 @@ test "ai processor no steady-state allocation (FailingAllocator)" {
 
     frame.beginStep();
     // Should reuse reserved; no alloc in hot emit path.
-    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &frame, 0.016, .{ .intent_seed = 1 });
+    _ = try ai_sys.updateSerial(ai_slice, movement_slice, &data, &frame, 0.016, .{ .intent_seed = 1 });
     try std.testing.expect(frame.intents.mergedItems().len == 1);
     frame.phase = .finished;
 
     frame.allocator = original;
+}
+
+test "ai sparse high entity index does not allocate during warmed gather" {
+    var data = @import("../data_system.zig").DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    for (0..1024) |_| {
+        _ = try data.createEntity();
+    }
+    const entity = try data.createEntity();
+    try data.setMovementBody(entity, .{ .position = .{ .x = 0, .y = 0 }, .previous_position = .{ .x = 0, .y = 0 }, .velocity = .{}, .speed = 10 });
+    try data.setAiAgent(entity, .{ .behavior = .wander });
+
+    var frame = SimulationFrame.init(std.testing.allocator);
+    defer frame.deinit();
+    try frame.reserveStreams(1, 0, 2, 0, 0, 0);
+
+    var ai_sys = AiSystem.init(std.testing.allocator);
+    defer ai_sys.deinit();
+    frame.beginStep();
+    _ = try ai_sys.updateSerial(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &frame, 0.016, .{ .intent_seed = 1 });
+    frame.phase = .finished;
+
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    const original_ai_allocator = ai_sys.allocator;
+    const original_frame_allocator = frame.allocator;
+    ai_sys.allocator = failing.allocator();
+    frame.allocator = failing.allocator();
+    defer {
+        ai_sys.allocator = original_ai_allocator;
+        frame.allocator = original_frame_allocator;
+    }
+
+    frame.beginStep();
+    _ = try ai_sys.updateSerial(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &frame, 0.016, .{ .intent_seed = 2 });
+    try std.testing.expectEqual(@as(usize, 1), frame.intents.mergedItems().len);
+    frame.phase = .finished;
 }
 
 test "ai processor only emits for ai-masked entities using prior positions" {
@@ -706,7 +711,7 @@ test "ai gather direct table and separation blend produce correct order + dirs (
     var ai_sys = AiSystem.init(std.testing.allocator);
     defer ai_sys.deinit();
     // Use explicit seek_target (not COM) + seed; gather must pick prior pos for exactly the 3 ai in ai order.
-    _ = try ai_sys.updateSerial(ai_slice, move_slice, &frame, 0.016, .{
+    _ = try ai_sys.updateSerial(ai_slice, move_slice, &data, &frame, 0.016, .{
         .intent_seed = 0xaaa,
         .seek_target = .{ .x = 200, .y = 150 },
     });
@@ -749,7 +754,7 @@ test "ai serial and threaded (0 workers) produce identical intents with separati
     var ai_sys = AiSystem.init(std.testing.allocator);
     defer ai_sys.deinit();
     const cfg: AiConfig = .{ .intent_seed = 0x1234abcd, .seek_target = .{ .x = 300, .y = 200 } };
-    _ = try ai_sys.updateSerial(ai_slice, move_slice, &frame, 0.016, cfg);
+    _ = try ai_sys.updateSerial(ai_slice, move_slice, &data, &frame, 0.016, cfg);
     const serial = frame.intents.mergedItems();
     try std.testing.expectEqual(@as(usize, 2), serial.len);
     frame.phase = .finished;
@@ -757,7 +762,7 @@ test "ai serial and threaded (0 workers) produce identical intents with separati
     frame.beginStep();
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{ .max_worker_threads = 0 });
     defer threads.deinit();
-    _ = try ai_sys.update(ai_slice, move_slice, &frame, &threads, 0.016, cfg);
+    _ = try ai_sys.update(ai_slice, move_slice, &data, &frame, &threads, 0.016, cfg);
     const thr = frame.intents.mergedItems();
     try std.testing.expectEqual(serial.len, thr.len);
     try std.testing.expectEqual(serial[0].movement.direction_x, thr[0].movement.direction_x);
@@ -765,4 +770,68 @@ test "ai serial and threaded (0 workers) produce identical intents with separati
     try std.testing.expectEqual(serial[1].movement.direction_x, thr[1].movement.direction_x);
     try std.testing.expectEqual(serial[1].movement.direction_y, thr[1].movement.direction_y);
     frame.phase = .finished;
+}
+
+test "ai serial and real threaded workers produce identical movement intents" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+
+    var data = @import("../data_system.zig").DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+    for (0..128) |i| {
+        const x: f32 = @floatFromInt(i % 16);
+        const y: f32 = @floatFromInt(i / 16);
+        const entity = try data.createEntity();
+        try data.setMovementBody(entity, .{
+            .position = .{ .x = x * 9.0, .y = y * 7.0 },
+            .previous_position = .{ .x = x * 9.0, .y = y * 7.0 },
+            .velocity = .{},
+            .speed = 20,
+        });
+        try data.setAiAgent(entity, .{
+            .behavior = if (i % 2 == 0) .seek else .wander,
+            .wander_amplitude = @floatFromInt(i % 13),
+            .seek_weight = if (i % 2 == 0) 0.7 else 0.2,
+        });
+    }
+
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .items_per_range = 16,
+    });
+    defer threads.deinit();
+    if (threads.workerThreadCount() == 0) return error.SkipZigTest;
+
+    const cfg: AiConfig = .{
+        .min_parallel_items = 1,
+        .items_per_range = 16,
+        .max_worker_threads = 2,
+        .adaptive = false,
+        .intent_seed = 0x1234abcd,
+        .seek_target = .{ .x = 300, .y = 200 },
+    };
+
+    var ai_sys = AiSystem.init(std.testing.allocator);
+    defer ai_sys.deinit();
+    var serial_frame = SimulationFrame.init(std.testing.allocator);
+    defer serial_frame.deinit();
+    try serial_frame.reserveStreams(8, 0, 128, 0, 0, 0);
+    serial_frame.beginStep();
+    _ = try ai_sys.updateSerial(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &serial_frame, 0.016, cfg);
+    const serial = serial_frame.intents.mergedItems();
+
+    var threaded_frame = SimulationFrame.init(std.testing.allocator);
+    defer threaded_frame.deinit();
+    try threaded_frame.reserveStreams(8, 0, 128, 0, 0, 0);
+    threaded_frame.beginStep();
+    _ = try ai_sys.update(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &threaded_frame, &threads, 0.016, cfg);
+    const threaded = threaded_frame.intents.mergedItems();
+
+    try std.testing.expectEqual(serial.len, threaded.len);
+    for (serial, threaded) |a, b| {
+        try std.testing.expectEqual(a.movement.entity.index, b.movement.entity.index);
+        try std.testing.expectEqual(a.movement.entity.generation, b.movement.entity.generation);
+        try std.testing.expectEqual(a.movement.direction_x, b.movement.direction_x);
+        try std.testing.expectEqual(a.movement.direction_y, b.movement.direction_y);
+    }
 }

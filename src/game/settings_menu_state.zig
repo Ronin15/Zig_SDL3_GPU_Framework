@@ -7,21 +7,43 @@ const config = @import("../config.zig");
 const Renderer = @import("../render/renderer.zig").Renderer;
 const TextTextureLease = @import("../render/text.zig").TextTextureLease;
 const TextService = @import("../render/text.zig").TextService;
+const AudioCommandBuffer = @import("../app/audio.zig").AudioCommandBuffer;
 const RenderContext = @import("../app/state.zig").RenderContext;
 const StateTransitions = @import("../app/state.zig").StateTransitions;
 const UpdateContext = @import("../app/state.zig").UpdateContext;
-const AudioBus = @import("../app/audio.zig").AudioBus;
+const inputFile = @import("../app/input.zig");
 const menu_view = @import("menu_view.zig");
 const log = @import("../core/logging.zig").game;
 const c = @import("../platform/sdl.zig").c;
 
+pub const RuntimeAudioSettings = struct {
+    master: u8,
+    sfx: u8,
+    music: u8,
+
+    pub fn init(audio_config: config.AudioConfig) RuntimeAudioSettings {
+        return .{
+            .master = valueFromGain(audio_config.master_gain),
+            .sfx = valueFromGain(audio_config.sfx_gain),
+            .music = valueFromGain(audio_config.music_gain),
+        };
+    }
+
+    pub fn gain(value: u8) f32 {
+        return @as(f32, @floatFromInt(value)) / 10.0;
+    }
+
+    fn valueFromGain(gain_value: f32) u8 {
+        const clamped = std.math.clamp(gain_value, 0.0, 1.0);
+        return @intFromFloat(@round(clamped * 10.0));
+    }
+};
+
 pub const SettingsMenuState = struct {
+    settings: *RuntimeAudioSettings,
     width: f32,
     height: f32,
     selected: usize = 0,
-    master: u8 = 10,
-    sfx: u8 = 8,
-    music: u8 = 6,
     title: TextTextureLease = .{},
     item_leases: [item_count]TextTextureLease = [_]TextTextureLease{.{}} ** item_count,
     needs_rebuild: bool = true,
@@ -54,9 +76,10 @@ pub const SettingsMenuState = struct {
     const highlight_pad_x: f32 = 12;
     const highlight_height: f32 = 28;
 
-    pub fn init(width: f32, height: f32) SettingsMenuState {
+    pub fn init(settings: *RuntimeAudioSettings, width: f32, height: f32) SettingsMenuState {
         log.debug("settings menu initialized ({}x{})", .{ width, height });
         return .{
+            .settings = settings,
             .width = width,
             .height = height,
         };
@@ -69,29 +92,29 @@ pub const SettingsMenuState = struct {
 
     pub fn handleEvent(self: *SettingsMenuState, event: *const c.SDL_Event, transitions: *StateTransitions) !bool {
         if (event.type != c.SDL_EVENT_KEY_DOWN or event.key.repeat) return false;
-        const key = event.key.key;
-        switch (key) {
-            c.SDLK_UP => {
+        const action = inputFile.actionForKey(event.key.key) orelse return false;
+        switch (action) {
+            .menuUp => {
                 self.changeSelection(-1);
                 return true;
             },
-            c.SDLK_DOWN => {
+            .menuDown => {
                 self.changeSelection(1);
                 return true;
             },
-            c.SDLK_LEFT => {
+            .menuLeft => {
                 self.pending_adjust = -1;
                 return true;
             },
-            c.SDLK_RIGHT => {
+            .menuRight => {
                 self.pending_adjust = 1;
                 return true;
             },
-            c.SDLK_RETURN, c.SDLK_SPACE => {
+            .resumeGame => {
                 try self.activate(transitions);
                 return true;
             },
-            c.SDLK_ESCAPE => {
+            .quit => {
                 try transitions.pop();
                 return true;
             },
@@ -102,8 +125,9 @@ pub const SettingsMenuState = struct {
 
     pub fn update(self: *SettingsMenuState, context: UpdateContext) !void {
         if (self.pending_adjust != 0) {
-            self.adjustSelected(self.pending_adjust, context.audio);
+            const delta = self.pending_adjust;
             self.pending_adjust = 0;
+            try self.adjustSelected(delta, context.audio);
         }
     }
 
@@ -115,7 +139,7 @@ pub const SettingsMenuState = struct {
         const text_service = context.text_service orelse return;
 
         if (self.needs_rebuild or !self.title.isAlive()) {
-            self.rebuildText(text_service, renderer) catch return;
+            try self.rebuildText(text_service, renderer);
         }
 
         try menu_view.renderList(
@@ -149,13 +173,13 @@ pub const SettingsMenuState = struct {
         self.needs_rebuild = true;
     }
 
-    fn adjustSelected(self: *SettingsMenuState, delta: i32, audio: *@import("../app/audio.zig").AudioCommandBuffer) void {
+    fn adjustSelected(self: *SettingsMenuState, delta: i32, audio: *AudioCommandBuffer) !void {
         if (self.selected >= 3) return; // Back row not adjustable
         const maxv: u8 = 10;
         const val: u8 = switch (self.selected) {
-            0 => self.master,
-            1 => self.sfx,
-            2 => self.music,
+            0 => self.settings.master,
+            1 => self.settings.sfx,
+            2 => self.settings.music,
             else => return,
         };
         const newv: u8 = if (delta > 0)
@@ -166,16 +190,16 @@ pub const SettingsMenuState = struct {
 
         switch (self.selected) {
             0 => {
-                self.master = newv;
-                audio.setMasterGain(@as(f32, @floatFromInt(newv)) / 10.0) catch {};
+                try audio.setMasterGain(RuntimeAudioSettings.gain(newv));
+                self.settings.master = newv;
             },
             1 => {
-                self.sfx = newv;
-                audio.setBusGain(.sfx, @as(f32, @floatFromInt(newv)) / 10.0) catch {};
+                try audio.setBusGain(.sfx, RuntimeAudioSettings.gain(newv));
+                self.settings.sfx = newv;
             },
             2 => {
-                self.music = newv;
-                audio.setBusGain(.music, @as(f32, @floatFromInt(newv)) / 10.0) catch {};
+                try audio.setBusGain(.music, RuntimeAudioSettings.gain(newv));
+                self.settings.music = newv;
             },
             else => {},
         }
@@ -193,6 +217,7 @@ pub const SettingsMenuState = struct {
 
     fn rebuildText(self: *SettingsMenuState, text_service: *TextService, renderer: *Renderer) !void {
         self.releaseLeases();
+        errdefer self.releaseLeases();
 
         // Title (static)
         self.title = try text_service.acquireText(renderer, .{
@@ -209,9 +234,9 @@ pub const SettingsMenuState = struct {
         var music_buf: [64]u8 = undefined;
 
         const labels = [_][]const u8{
-            std.fmt.bufPrint(&master_buf, "Master Volume: {d: >2}/10", .{self.master}) catch "Master Volume: ??/10",
-            std.fmt.bufPrint(&sfx_buf, "SFX Volume:    {d: >2}/10", .{self.sfx}) catch "SFX Volume:    ??/10",
-            std.fmt.bufPrint(&music_buf, "Music Volume:  {d: >2}/10", .{self.music}) catch "Music Volume:  ??/10",
+            std.fmt.bufPrint(&master_buf, "Master Volume: {d: >2}/10", .{self.settings.master}) catch "Master Volume: ??/10",
+            std.fmt.bufPrint(&sfx_buf, "SFX Volume:    {d: >2}/10", .{self.settings.sfx}) catch "SFX Volume:    ??/10",
+            std.fmt.bufPrint(&music_buf, "Music Volume:  {d: >2}/10", .{self.settings.music}) catch "Music Volume:  ??/10",
             "Back",
         };
 
@@ -236,9 +261,9 @@ pub const SettingsMenuState = struct {
 };
 
 test "settings volumes clamp and emit gain commands" {
-    const AudioCommandBuffer = @import("../app/audio.zig").AudioCommandBuffer;
+    var runtime_settings = RuntimeAudioSettings.init(.{});
 
-    var settings = SettingsMenuState.init(800, 450);
+    var settings = SettingsMenuState.init(&runtime_settings, 800, 450);
     defer settings.deinit();
 
     var audio = AudioCommandBuffer.init(std.testing.allocator, 16);
@@ -252,34 +277,81 @@ test "settings volumes clamp and emit gain commands" {
         .thread_system = undefined,
     };
 
-    // start at defaults in struct
-    try std.testing.expectEqual(@as(u8, 10), settings.master);
-    try std.testing.expectEqual(@as(u8, 8), settings.sfx);
+    try std.testing.expectEqual(@as(u8, 10), runtime_settings.master);
+    try std.testing.expectEqual(@as(u8, 9), runtime_settings.sfx);
+    try std.testing.expectEqual(@as(u8, 6), runtime_settings.music);
 
     // select master (0), right increases (but already 10)
     settings.selected = 0;
-    settings.adjustSelected(1, ctx.audio);
-    try std.testing.expectEqual(@as(u8, 10), settings.master);
+    try settings.adjustSelected(1, ctx.audio);
+    try std.testing.expectEqual(@as(u8, 10), runtime_settings.master);
     try std.testing.expectEqual(@as(usize, 0), audio.len());
 
     // left decreases
-    settings.adjustSelected(-1, ctx.audio);
-    try std.testing.expectEqual(@as(u8, 9), settings.master);
+    try settings.adjustSelected(-1, ctx.audio);
+    try std.testing.expectEqual(@as(u8, 9), runtime_settings.master);
     try std.testing.expect(audio.len() >= 1);
 
     // select sfx, adjust
     settings.selected = 1;
-    settings.adjustSelected(-1, ctx.audio);
-    try std.testing.expectEqual(@as(u8, 7), settings.sfx);
+    try settings.adjustSelected(-1, ctx.audio);
+    try std.testing.expectEqual(@as(u8, 8), runtime_settings.sfx);
 
     // select music, adjust up
     settings.selected = 2;
-    settings.adjustSelected(1, ctx.audio);
-    try std.testing.expectEqual(@as(u8, 7), settings.music);
+    try settings.adjustSelected(1, ctx.audio);
+    try std.testing.expectEqual(@as(u8, 7), runtime_settings.music);
+
+    var reopened = SettingsMenuState.init(&runtime_settings, 800, 450);
+    defer reopened.deinit();
+    try std.testing.expectEqual(@as(u8, 9), reopened.settings.master);
+    try std.testing.expectEqual(@as(u8, 8), reopened.settings.sfx);
+    try std.testing.expectEqual(@as(u8, 7), reopened.settings.music);
+}
+
+test "settings handleEvent uses named input actions" {
+    var runtime_settings = RuntimeAudioSettings.init(.{});
+    var settings = SettingsMenuState.init(&runtime_settings, 800, 450);
+    defer settings.deinit();
+
+    var transitions = StateTransitions.init(std.testing.allocator);
+    defer transitions.deinit();
+
+    var up = keyEventForAction(.menuUp);
+    try std.testing.expect(try settings.handleEvent(&up, &transitions));
+    try std.testing.expectEqual(@as(usize, 3), settings.selected);
+
+    var down = keyEventForAction(.menuDown);
+    try std.testing.expect(try settings.handleEvent(&down, &transitions));
+    try std.testing.expectEqual(@as(usize, 0), settings.selected);
+
+    var right = keyEventForAction(.menuRight);
+    try std.testing.expect(try settings.handleEvent(&right, &transitions));
+    try std.testing.expectEqual(@as(i32, 1), settings.pending_adjust);
+
+    settings.selected = 3;
+    var confirm = keyEventForAction(.resumeGame);
+    try std.testing.expect(try settings.handleEvent(&confirm, &transitions));
+    try std.testing.expectEqual(@as(usize, 1), transitions.requests.items.len);
+}
+
+test "settings failed audio command leaves runtime value unchanged" {
+    var runtime_settings = RuntimeAudioSettings.init(.{});
+    var settings = SettingsMenuState.init(&runtime_settings, 800, 450);
+    defer settings.deinit();
+
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 1);
+    defer audio.deinit();
+    try audio.setMasterGain(1.0);
+
+    settings.selected = 0;
+    try std.testing.expectError(error.AudioCommandLimitReached, settings.adjustSelected(-1, &audio));
+    try std.testing.expectEqual(@as(u8, 10), runtime_settings.master);
 }
 
 test "settings back via quit action requests pop" {
-    var settings = SettingsMenuState.init(800, 450);
+    var runtime_settings = RuntimeAudioSettings.init(.{});
+    var settings = SettingsMenuState.init(&runtime_settings, 800, 450);
     defer settings.deinit();
 
     var transitions = StateTransitions.init(std.testing.allocator);
@@ -292,4 +364,25 @@ test "settings back via quit action requests pop" {
     // Or via the quit path in real update, here directly test pop request present
     try transitions.pop();
     try std.testing.expect(transitions.requests.items.len > 0);
+}
+
+fn keyEventForAction(action: inputFile.Action) c.SDL_Event {
+    for (inputFile.default_key_bindings) |binding| {
+        if (binding.action == action) {
+            return c.SDL_Event{ .key = .{
+                .type = c.SDL_EVENT_KEY_DOWN,
+                .reserved = 0,
+                .timestamp = 0,
+                .windowID = 0,
+                .which = 0,
+                .scancode = 0,
+                .key = binding.key,
+                .mod = 0,
+                .raw = 0,
+                .down = true,
+                .repeat = false,
+            } };
+        }
+    }
+    unreachable;
 }

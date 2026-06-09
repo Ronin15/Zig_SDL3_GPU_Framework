@@ -22,9 +22,8 @@ const c = @import("../platform/sdl.zig").c;
 /// Non-gameplay states (MainMenu opaque_screen, Settings modal_overlay, any future HUD pass-through)
 /// never receive onPause from the pause flow, and PauseState is never pushed over them.
 ///
-/// .pause/.resumeGame commands may still be generated under modals (per input routing policy,
-/// for resume-from-overlay and menu Esc/quit flows); the isGameplayActive gate here turns them
-/// into safe no-ops from menus. No changes to routing or command production.
+/// Commands can still be generated for app-owned pause/resume paths; the
+/// gameplay-active gate here turns non-gameplay attempts into safe no-ops.
 pub const PauseController = struct {
     handle: ?StateHandle = null,
     source: PauseSource = .none,
@@ -124,7 +123,7 @@ pub const PauseController = struct {
         time_loop: *TimeLoop,
         now_ns: u64,
     ) !void {
-        if (policy.should_pause_gameplay and states.isGameplayActive()) {
+        if (policy.should_pause_gameplay and (states.isGameplayActive() or self.isPolicyPaused())) {
             try self.enterPolicy(states, input, time_loop, now_ns);
         } else if (self.isPolicyPaused()) {
             self.exit(states, input, time_loop, now_ns);

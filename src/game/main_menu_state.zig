@@ -8,10 +8,13 @@ const Renderer = @import("../render/renderer.zig").Renderer;
 const TextTextureLease = @import("../render/text.zig").TextTextureLease;
 const TextService = @import("../render/text.zig").TextService;
 const RenderContext = @import("../app/state.zig").RenderContext;
+const State = @import("../app/state.zig").State;
 const StateTransitions = @import("../app/state.zig").StateTransitions;
 const UpdateContext = @import("../app/state.zig").UpdateContext;
+const inputFile = @import("../app/input.zig");
 const GameDemoState = @import("game_demo_state.zig").GameDemoState;
 const SettingsMenuState = @import("settings_menu_state.zig").SettingsMenuState;
+const RuntimeAudioSettings = @import("settings_menu_state.zig").RuntimeAudioSettings;
 const menu_view = @import("menu_view.zig");
 const log = @import("../core/logging.zig").game;
 const c = @import("../platform/sdl.zig").c;
@@ -20,6 +23,7 @@ pub const MainMenuState = struct {
     allocator: std.mem.Allocator,
     width: f32,
     height: f32,
+    audio_settings: RuntimeAudioSettings,
     selected: usize = 0,
     title: TextTextureLease = .{},
     item_leases: [item_count]TextTextureLease = [_]TextTextureLease{.{}} ** item_count,
@@ -51,12 +55,13 @@ pub const MainMenuState = struct {
     const highlight_pad_x: f32 = 10;
     const highlight_height: f32 = 30;
 
-    pub fn init(allocator: std.mem.Allocator, width: f32, height: f32) MainMenuState {
+    pub fn init(allocator: std.mem.Allocator, width: f32, height: f32, audio_config: config.AudioConfig) MainMenuState {
         log.debug("main menu initialized ({}x{})", .{ width, height });
         return .{
             .allocator = allocator,
             .width = width,
             .height = height,
+            .audio_settings = RuntimeAudioSettings.init(audio_config),
         };
     }
 
@@ -67,21 +72,21 @@ pub const MainMenuState = struct {
 
     pub fn handleEvent(self: *MainMenuState, event: *const c.SDL_Event, transitions: *StateTransitions) !bool {
         if (event.type != c.SDL_EVENT_KEY_DOWN or event.key.repeat) return false;
-        const key = event.key.key;
-        switch (key) {
-            c.SDLK_UP => {
+        const action = inputFile.actionForKey(event.key.key) orelse return false;
+        switch (action) {
+            .menuUp => {
                 self.changeSelection(-1);
                 return true;
             },
-            c.SDLK_DOWN => {
+            .menuDown => {
                 self.changeSelection(1);
                 return true;
             },
-            c.SDLK_RETURN, c.SDLK_SPACE => {
+            .resumeGame => {
                 try self.activate(transitions);
                 return true;
             },
-            c.SDLK_ESCAPE => {
+            .quit => {
                 try transitions.quit();
                 return true;
             },
@@ -103,7 +108,7 @@ pub const MainMenuState = struct {
         const text_service = context.text_service orelse return;
 
         if (self.needs_rebuild or !self.title.isAlive()) {
-            self.rebuildText(text_service, renderer) catch return;
+            try self.rebuildText(text_service, renderer);
         }
 
         try menu_view.renderList(
@@ -141,11 +146,22 @@ pub const MainMenuState = struct {
         log.debug("main menu activating item {d}", .{self.selected});
         switch (self.selected) {
             0 => {
-                // Launch gameplay
-                try transitions.replaceGameplay(GameDemoState, try GameDemoState.init(self.allocator, self.width, self.height));
+                const game_ptr = try self.allocator.create(GameDemoState);
+                var initialized = false;
+                var owned_by_transition = false;
+                errdefer if (!owned_by_transition) {
+                    if (initialized) game_ptr.deinit();
+                    self.allocator.destroy(game_ptr);
+                };
+
+                game_ptr.* = try GameDemoState.init(self.allocator, self.width, self.height);
+                initialized = true;
+                const state = State.fromOwnedPtr(GameDemoState, game_ptr);
+                owned_by_transition = true;
+                try transitions.replaceOwnedGameplay(state);
             },
             1 => {
-                try transitions.pushModal(SettingsMenuState, SettingsMenuState.init(self.width, self.height));
+                try transitions.pushModal(SettingsMenuState, SettingsMenuState.init(&self.audio_settings, self.width, self.height));
             },
             2 => {
                 try transitions.quit();
@@ -156,6 +172,7 @@ pub const MainMenuState = struct {
 
     fn rebuildText(self: *MainMenuState, text_service: *TextService, renderer: *Renderer) !void {
         self.releaseLeases();
+        errdefer self.releaseLeases();
 
         self.title = try text_service.acquireText(renderer, .{
             .text = "Zig SDL3 GPU",
@@ -186,7 +203,7 @@ pub const MainMenuState = struct {
 };
 
 test "main menu selection wraps and activates produce transitions" {
-    var menu = MainMenuState.init(std.testing.allocator, 800, 450);
+    var menu = MainMenuState.init(std.testing.allocator, 800, 450, .{});
     defer menu.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), menu.selected);
@@ -204,4 +221,65 @@ test "main menu selection wraps and activates produce transitions" {
     menu.selected = 0;
     try menu.activate(&transitions);
     try std.testing.expect(transitions.requests.items.len > 0);
+}
+
+test "main menu handleEvent uses named input actions" {
+    var menu = MainMenuState.init(std.testing.allocator, 800, 450, .{});
+    defer menu.deinit();
+
+    var transitions = StateTransitions.init(std.testing.allocator);
+    defer transitions.deinit();
+
+    var up = keyEventForAction(.menuUp);
+    try std.testing.expect(try menu.handleEvent(&up, &transitions));
+    try std.testing.expectEqual(@as(usize, 2), menu.selected);
+
+    var down = keyEventForAction(.menuDown);
+    try std.testing.expect(try menu.handleEvent(&down, &transitions));
+    try std.testing.expectEqual(@as(usize, 0), menu.selected);
+
+    menu.selected = 2;
+    var confirm = keyEventForAction(.resumeGame);
+    try std.testing.expect(try menu.handleEvent(&confirm, &transitions));
+    try std.testing.expectEqual(@as(usize, 1), transitions.requests.items.len);
+}
+
+test "main menu owns runtime audio settings for settings modals" {
+    var menu = MainMenuState.init(std.testing.allocator, 800, 450, .{
+        .master_gain = 0.7,
+        .sfx_gain = 0.2,
+        .music_gain = 0.9,
+    });
+    defer menu.deinit();
+
+    try std.testing.expectEqual(@as(u8, 7), menu.audio_settings.master);
+    try std.testing.expectEqual(@as(u8, 2), menu.audio_settings.sfx);
+    try std.testing.expectEqual(@as(u8, 9), menu.audio_settings.music);
+
+    var transitions = StateTransitions.init(std.testing.allocator);
+    defer transitions.deinit();
+    menu.selected = 1;
+    try menu.activate(&transitions);
+    try std.testing.expectEqual(@as(usize, 1), transitions.requests.items.len);
+}
+
+fn keyEventForAction(action: inputFile.Action) c.SDL_Event {
+    for (inputFile.default_key_bindings) |binding| {
+        if (binding.action == action) {
+            return c.SDL_Event{ .key = .{
+                .type = c.SDL_EVENT_KEY_DOWN,
+                .reserved = 0,
+                .timestamp = 0,
+                .windowID = 0,
+                .which = 0,
+                .scancode = 0,
+                .key = binding.key,
+                .mod = 0,
+                .raw = 0,
+                .down = true,
+                .repeat = false,
+            } };
+        }
+    }
+    unreachable;
 }

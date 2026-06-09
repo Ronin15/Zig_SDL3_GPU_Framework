@@ -132,7 +132,7 @@ pub const GameDemoState = struct {
         else
             math.Vec2{ .x = 400, .y = 225 };
 
-        _ = try self.ai.update(ai_slice, move_slice, &self.simulation_frame, context.thread_system, context.delta_seconds, .{
+        _ = try self.ai.update(ai_slice, move_slice, &self.data, &self.simulation_frame, context.thread_system, context.delta_seconds, .{
             .intent_seed = 0xfeedf00d,
             .seek_target = player_target,
         });

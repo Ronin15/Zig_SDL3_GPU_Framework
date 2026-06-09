@@ -131,13 +131,13 @@ fn runOnce(system: *AiSystem, fixture: *Fixture, thread_system: ?*ThreadSystem, 
     const ai_slice = fixture.data.aiAgentSliceConst();
     const movement_slice = fixture.data.movementBodySliceConst();
     if (!case.usesThreadSystem()) {
-        return try system.updateSerial(ai_slice, movement_slice, &fixture.frame, delta_seconds, .{
+        return try system.updateSerial(ai_slice, movement_slice, &fixture.data, &fixture.frame, delta_seconds, .{
             .intent_seed = intent_seed,
             .seek_target = benchmarkSeekTarget(),
         });
     }
 
-    return try system.update(ai_slice, movement_slice, &fixture.frame, thread_system.?, delta_seconds, .{
+    return try system.update(ai_slice, movement_slice, &fixture.data, &fixture.frame, thread_system.?, delta_seconds, .{
         .min_parallel_items = 1,
         .items_per_range = benchmarkItemsPerRange(case),
         .max_worker_threads = case.maxWorkerThreads(),

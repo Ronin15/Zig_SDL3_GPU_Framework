@@ -225,6 +225,9 @@ pub const AiAgent = struct {
     seek_weight: f32 = 0.0,
 };
 
+pub const max_ai_wander_amplitude: f32 = 1000.0;
+pub const max_ai_seek_weight: f32 = 16.0;
+
 pub const AiAgentCommand = struct {
     entity: EntityId,
     agent: AiAgent,
@@ -569,13 +572,7 @@ pub const DataSystem = struct {
     }
 
     pub fn setAiAgent(self: *DataSystem, id: EntityId, agent: AiAgent) !void {
-        // Minimal validation: finite params only (no-op for enum)
-        if (!std.math.isFinite(agent.wander_amplitude) or !std.math.isFinite(agent.seek_weight)) {
-            return error.InvalidAiAgent;
-        }
-        if (agent.wander_amplitude < 0 or agent.seek_weight < 0) {
-            return error.InvalidAiAgent;
-        }
+        try validateAiAgent(agent);
         const slot = self.resolveSlot(id) orelse return error.InvalidEntity;
         if (slot.ai_agent_index) |index| {
             self.ai_agents.set(@intCast(index), agent);
@@ -691,6 +688,9 @@ pub const DataSystem = struct {
                     }
                     if (template.collision_response) |response| {
                         try validateCollisionResponse(response);
+                    }
+                    if (template.ai_agent) |agent| {
+                        try validateAiAgent(agent);
                     }
                 },
                 .set_asset_reference => |set| try assets.validateRelativePath(set.asset_reference.relative_path),
@@ -829,6 +829,7 @@ fn validateCollisionResponse(response: CollisionResponse) !void {
 fn validateAiAgent(agent: AiAgent) !void {
     if (!std.math.isFinite(agent.wander_amplitude) or !std.math.isFinite(agent.seek_weight)) return error.InvalidAiAgent;
     if (agent.wander_amplitude < 0 or agent.seek_weight < 0) return error.InvalidAiAgent;
+    if (agent.wander_amplitude > max_ai_wander_amplitude or agent.seek_weight > max_ai_seek_weight) return error.InvalidAiAgent;
 }
 
 const MovementBodyStore = struct {
@@ -1948,6 +1949,8 @@ test "ai agent component stores dense columns, supports template create and set/
     try std.testing.expectError(error.InvalidAiAgent, data.setAiAgent(first, .{ .wander_amplitude = -0.1 }));
     try std.testing.expectError(error.InvalidAiAgent, data.setAiAgent(first, .{ .seek_weight = std.math.inf(f32) }));
     try std.testing.expectError(error.InvalidAiAgent, data.setAiAgent(first, .{ .wander_amplitude = std.math.nan(f32) }));
+    try std.testing.expectError(error.InvalidAiAgent, data.setAiAgent(first, .{ .wander_amplitude = std.math.floatMax(f32) }));
+    try std.testing.expectError(error.InvalidAiAgent, data.setAiAgent(first, .{ .seek_weight = max_ai_seek_weight + 1.0 }));
 
     try std.testing.expect(data.destroyEntity(second));
     const slice = data.aiAgentSliceConst();
@@ -2009,6 +2012,26 @@ test "structural commands prevalidate fallible data before mutating" {
     };
 
     try std.testing.expectError(error.InvalidAssetPath, data.applyStructuralCommands(&commands));
+    try std.testing.expectEqual(@as(f32, 1), data.movementBodyConst(existing).?.position.x);
+    try std.testing.expectEqual(@as(usize, 1), data.movementBodySliceConst().entities.len);
+}
+
+test "structural commands prevalidate ai agents before mutating" {
+    var data = DataSystem.init(std.testing.allocator);
+    defer data.deinit();
+
+    const existing = try data.createEntity();
+    try data.setMovementBody(existing, testBody(1));
+
+    const commands = [_]StructuralCommand{
+        .{ .set_movement_body = .{ .entity = existing, .body = testBody(99) } },
+        .{ .create_entity = .{
+            .movement_body = testBody(2),
+            .ai_agent = .{ .behavior = .wander, .wander_amplitude = std.math.floatMax(f32), .seek_weight = 0 },
+        } },
+    };
+
+    try std.testing.expectError(error.InvalidAiAgent, data.applyStructuralCommands(&commands));
     try std.testing.expectEqual(@as(f32, 1), data.movementBodyConst(existing).?.position.x);
     try std.testing.expectEqual(@as(usize, 1), data.movementBodySliceConst().entities.len);
 }

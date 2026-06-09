@@ -180,7 +180,7 @@ pub const Engine = struct {
     pub fn handleEvents(self: *Engine) !void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
-            input_router.routeEvent(self.states.inputRoutingPolicy(), &event, &self.input, &self.commands);
+            const routing_policy = self.states.inputRoutingPolicy();
             switch (event.type) {
                 c.SDL_EVENT_QUIT => {
                     log.debug("quit requested by SDL event", .{});
@@ -188,7 +188,10 @@ pub const Engine = struct {
                 },
                 else => {},
             }
-            try self.states.handleEvent(&event, &self.transitions);
+            const consumed = try self.states.handleEvent(&event, &self.transitions);
+            if (!consumed) {
+                input_router.routeEvent(routing_policy, &event, &self.input, &self.commands);
+            }
             try self.applyTransitions();
         }
 
@@ -354,6 +357,7 @@ fn bootstrapStartupState(states: *StateStack, allocator: std.mem.Allocator, app_
         allocator,
         @floatFromInt(logical_size.width),
         @floatFromInt(logical_size.height),
+        app_config.audio,
     );
 
     const state = State.fromOwnedPtr(MainMenuState, menu_ptr);

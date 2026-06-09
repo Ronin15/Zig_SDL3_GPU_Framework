@@ -19,7 +19,7 @@ pub const SimulationPhase = enum {
     idle,
     begin_step,
     main_thread_inputs,
-    processors,
+    processors, // includes ai decision (emit intents) + intent apply + movement + collision + response + particles (explicit order in GameDemoState)
     merge_outputs,
     commit_structural,
     finished,
@@ -165,10 +165,20 @@ pub fn RangeOutputStream(comptime T: type) type {
 
         pub fn prepareRangeCounts(self: *Self, range_count: usize) !void {
             self.clearRetainingCapacity();
-            try self.counts.ensureTotalCapacity(self.allocator, range_count);
+            _ = try self.appendRangeCounts(range_count);
+        }
+
+        pub fn appendRangeCounts(self: *Self, range_count: usize) !usize {
+            if (self.prefix_ready) {
+                std.debug.assert(self.offsets.items.len == self.counts.items.len);
+                std.debug.assert(self.write_offsets.items.len == self.counts.items.len);
+            }
+            const first_range = self.counts.items.len;
+            try self.counts.ensureTotalCapacity(self.allocator, first_range + range_count);
             for (0..range_count) |_| {
                 self.counts.appendAssumeCapacity(0);
             }
+            return first_range;
         }
 
         pub fn addCount(self: *Self, range_index: usize, count: usize) void {
@@ -196,6 +206,31 @@ pub fn RangeOutputStream(comptime T: type) type {
             }
             self.merged_len = running_total;
             self.prefix_ready = true;
+        }
+
+        pub fn prefixAppendedRanges(self: *Self, first_range: usize) !void {
+            if (!self.prefix_ready) {
+                try self.prefix();
+                return;
+            }
+
+            std.debug.assert(first_range == self.offsets.items.len);
+            std.debug.assert(first_range == self.write_offsets.items.len);
+            try self.offsets.ensureTotalCapacity(self.allocator, self.counts.items.len);
+            try self.write_offsets.ensureTotalCapacity(self.allocator, self.counts.items.len);
+
+            var running_total = self.merged_len;
+            for (self.counts.items[first_range..]) |count| {
+                self.offsets.appendAssumeCapacity(running_total);
+                self.write_offsets.appendAssumeCapacity(running_total);
+                running_total += count;
+            }
+
+            try self.values.ensureTotalCapacity(self.allocator, running_total);
+            while (self.values.items.len < running_total) {
+                self.values.appendAssumeCapacity(undefined);
+            }
+            self.merged_len = running_total;
         }
 
         pub const RangeWriter = struct {
@@ -406,6 +441,40 @@ test "range output stream reuses warmed capacity without allocation" {
     try std.testing.expectEqual(@as(usize, 2), merged.len);
     try std.testing.expectEqual(@as(u32, 4), merged[0].marker);
     try std.testing.expectEqual(@as(u32, 5), merged[1].marker);
+}
+
+test "range output stream appends ranges after completed output" {
+    var stream = RangeOutputStream(SimulationIntent).init(std.testing.allocator);
+    defer stream.deinit();
+
+    try stream.prepareRangeCounts(1);
+    stream.addCount(0, 1);
+    try stream.prefix();
+    var first_writer = stream.rangeWriter(0);
+    first_writer.write(.{ .marker = 7 });
+    first_writer.finish();
+    stream.finishWrite();
+
+    const appended_range = try stream.appendRangeCounts(2);
+    try std.testing.expectEqual(@as(usize, 1), appended_range);
+    stream.addCount(appended_range, 1);
+    stream.addCount(appended_range + 1, 2);
+    try stream.prefixAppendedRanges(appended_range);
+    var writer_1 = stream.rangeWriter(appended_range);
+    writer_1.write(.{ .marker = 8 });
+    writer_1.finish();
+    var writer_2 = stream.rangeWriter(appended_range + 1);
+    writer_2.write(.{ .marker = 9 });
+    writer_2.write(.{ .marker = 10 });
+    writer_2.finish();
+    stream.finishWrite();
+
+    const merged = stream.mergedItems();
+    try std.testing.expectEqual(@as(usize, 4), merged.len);
+    try std.testing.expectEqual(@as(u32, 7), merged[0].marker);
+    try std.testing.expectEqual(@as(u32, 8), merged[1].marker);
+    try std.testing.expectEqual(@as(u32, 9), merged[2].marker);
+    try std.testing.expectEqual(@as(u32, 10), merged[3].marker);
 }
 
 test "simulation frame reserves stream capacity for warmed fixed-step output" {

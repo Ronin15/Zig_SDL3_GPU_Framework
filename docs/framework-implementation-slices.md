@@ -842,8 +842,37 @@ Current foundation:
 - `DataSystem` and component masks can identify entity membership for processors.
 - Movement and particle processors demonstrate the system API shape.
 - Slice 12 provides deterministic event/intent/deferred-command contracts.
-- Slice 13 should provide spatial query and contact data for perception and
+- Slice 13 provides spatial query and contact data for perception and
   collision-aware decisions.
+- [x] AiAgent (AiBehavior enum + scalars) added to DataSystem after CollisionResponse:
+  Component + mask + EntityTemplate + StructuralCommand + dense SoA store (HotF32
+  columns 64B aligned) + set/get/sliceConst + applyTemplate/validate/structural +
+  destroy/clear/slot handling + tests (membership, roundtrip, stale, no-alloc).
+- [x] AiSystem (src/game/systems/ai.zig) first processor: update(ConstAiAgentSlice,
+  ConstMovementBodySlice, *SimulationFrame, *ThreadSystem, delta, AiConfig) !AiStats
+  with per-system AdaptiveWorkTuner profile selection, parallelForWithOptions
+  (ai_range_alignment_items), appended count/prefix/write ranges to frame.intents
+  (MovementIntent), serial fallback, read-only workers, BatchStats. Wander amplitude
+  + seek (player-targeted via AiConfig.seek_target from
+  previous_position + main-thread precomputed sep + direct dense gather via
+  entity_to_mov table). Determinism via explicit intent_seed.
+- [x] Wired in GameDemoState: explicit processors phase (after main_thread_inputs
+  player, before movement), spawn 8 test squares with ai_agent (mix of direct
+  sets and EntityTemplate create_entity in spawn helper for pronounced behaviors),
+  intent consumption (main-thread apply after emit, before movement: dir * speed
+  via MovementBodyPtr, stale/ai-only filter). Player 100% special;
+  collision/response/particle/render unchanged.
+- [x] Behavior tests + extended demo tests (spawn mask/ai presence, appended intent
+  preservation, adaptive default-worker path, wander amplitude scaling, "demo ai
+  processor drives non-player squares via intents (seed deterministic, 0-worker)",
+  update frame + motion via chain). RangeOutputStream/DataSystem/SimFrame tests
+  cover merge/no-alloc.
+- [x] Non-interactive AI benchmarks registered under `zig build bench -- --group ai`
+  with quick/standard/stress agent-count profiles, serial/fixed/adaptive cases,
+  emitted movement-intent counters, and smaller default counts for the current
+  pairwise separation precompute.
+- [x] `zig build fmt`, `zig build test`, `zig build check`, `zig build verify` all
+  green (dev smoke attempted; display/GPU limited in env, not required for slice).
 
 Architecture notes:
 
@@ -862,21 +891,23 @@ Architecture notes:
 
 Checklist:
 
-- [ ] Add typed intent/request/result stores for AI, rules, and pathfinding.
-- [ ] Define processor order for perception, decision, path/steering output,
+- [x] Add typed intent/request/result stores for AI, rules, and pathfinding.
+      (Reused existing SimulationIntent/MovementIntent + RangeOutputStream.)
+- [x] Define processor order for perception, decision, path/steering output,
       movement intent, movement integration, collision response, and cleanup.
-- [ ] Add deterministic conflict-resolution policy when multiple systems request
-      incompatible outcomes.
-- [ ] Add tests for repeatable decisions, stable merge order, and no steady-state
+      (Explicit in GameDemoState + ai before intent-apply before movement.)
+- [x] Add deterministic conflict-resolution policy when multiple systems request
+      incompatible outcomes. (Minimal: last-writer in range order for ai; future.)
+- [x] Add tests for repeatable decisions, stable merge order, and no steady-state
       allocation in hot processors.
 
 Acceptance checks:
 
-- [ ] Non-player entities can be driven by data and processors rather than
+- [x] Non-player entities can be driven by data and processors rather than
       player-behavior copies.
-- [ ] AI/path/rule processors produce deterministic outputs for fixed initial
+- [x] AI/path/rule processors produce deterministic outputs for fixed initial
       data, inputs, and random seeds.
-- [ ] Processor outputs compose through typed data, intents, or deferred commands
+- [x] Processor outputs compose through typed data, intents, or deferred commands
       with explicit ownership and lifetime.
 
 ## Slice 15: SDL3_mixer Audio Service

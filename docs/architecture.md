@@ -214,6 +214,19 @@ components, computes aligned correction columns with `src/core/simd.zig`, and
 applies sparse movement writes deterministically on the main thread before
 structural commands commit.
 
+`AiSystem` (first AI processor) is a decision emitter over ai_agent entities.
+It receives const AiAgent + movement prior-position slices (read-only), uses a
+per-system AdaptiveWorkTuner to select the range/worker profile for
+parallelForWithOptions (range-aligned), and appends MovementIntent ranges via
+`SimulationFrame.intents` (count/prefix/write). Wander amplitude and seek
+(player-targeted via AiConfig.seek_target from previous_position +
+main-thread precomputed sep + direct dense gather via entity_to_mov table)
+prove non-player entities are driven by persistent data + processor intents, not
+hardcoded velocities. Consumption (main-thread, before MovementSystem) writes
+velocities from intent dir * speed using MovementBodyPtr; player remains
+special-cased with no ai_agent component. Intent streams and processor order are
+explicit in the owning `GameDemoState`.
+
 The demo player is intentionally a special-case facade for player input and
 facing rules, backed by `DataSystem` data. Enemies and other world objects
 should normally be plain entities processed by enemy, movement, collision, AI,

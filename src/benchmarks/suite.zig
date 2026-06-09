@@ -540,6 +540,7 @@ fn printGroupReport(group: BenchmarkGroup, results: []const CaseResult, options:
 fn itemLabel(group_name: []const u8) []const u8 {
     if (std.mem.eql(u8, group_name, "movement")) return "movement bodies";
     if (std.mem.eql(u8, group_name, "particles")) return "particle rows";
+    if (std.mem.eql(u8, group_name, "ai")) return "AI agents";
     if (std.mem.eql(u8, group_name, "collision")) return "collision bodies";
     if (std.mem.eql(u8, group_name, "collision-sparse")) return "collision bodies";
     if (std.mem.startsWith(u8, group_name, "collision-response")) return "contacts";
@@ -658,7 +659,12 @@ fn printValidationSummary(
     }
 
     if (best.stats.candidate_pairs != 0 or best.stats.output_count != 0) {
-        if (std.mem.startsWith(u8, group_name, "collision-response")) {
+        if (std.mem.eql(u8, group_name, "ai")) {
+            std.debug.print(
+                "workload separation_pairs={} intents={}. ",
+                .{ best.stats.candidate_pairs, best.stats.output_count },
+            );
+        } else if (std.mem.startsWith(u8, group_name, "collision-response")) {
             std.debug.print(
                 "workload triggers={} intents={}. ",
                 .{ best.stats.candidate_pairs, best.stats.output_count },
@@ -797,6 +803,9 @@ fn formatWorkTuningInto(buffer: []u8, maybe_summary: ?WorkTuningSummary) []const
 
 fn formatWorkloadInto(buffer: []u8, group_name: []const u8, stats: RunStats) []const u8 {
     if (stats.candidate_pairs == 0 and stats.output_count == 0) return "-";
+    if (std.mem.eql(u8, group_name, "ai")) {
+        return std.fmt.bufPrint(buffer, "separation_pairs={} intents={}", .{ stats.candidate_pairs, stats.output_count }) catch "workload";
+    }
     if (std.mem.startsWith(u8, group_name, "collision-response")) {
         return std.fmt.bufPrint(buffer, "triggers={} intents={}", .{ stats.candidate_pairs, stats.output_count }) catch "workload";
     }

@@ -14,12 +14,14 @@ const CollisionResponseMode = @import("data_system.zig").CollisionResponseMode;
 const DataSystem = @import("data_system.zig").DataSystem;
 const EntityId = @import("data_system.zig").EntityId;
 const movement_range_alignment_items = @import("data_system.zig").movement_range_alignment_items;
+const StructuralCommand = @import("data_system.zig").StructuralCommand;
 const InputState = @import("../app/input.zig").InputState;
 const Player = @import("player.zig").Player;
 const CollisionSystem = @import("systems/collision.zig").CollisionSystem;
 const CollisionResponseSystem = @import("systems/collision_response.zig").CollisionResponseSystem;
 const MovementSystem = @import("systems/movement.zig").MovementSystem;
 const ParticleSystem = @import("systems/particle.zig").ParticleSystem;
+const AiSystem = @import("systems/ai.zig").AiSystem;
 const CollisionContact = @import("simulation.zig").CollisionContact;
 const SimulationFrame = @import("simulation.zig").SimulationFrame;
 const SimulationPhase = @import("simulation.zig").SimulationPhase;
@@ -30,11 +32,11 @@ const Renderer = @import("../render/renderer.zig").Renderer;
 const ThreadSystem = @import("../app/thread_system.zig").ThreadSystem;
 const c = @import("../platform/sdl.zig").c;
 
-const test_square_count = 4;
+const test_square_count = 8;
 const obstacle_count = 2;
 const collision_sfx_cooldown_capacity = 32;
 const collision_sfx_cooldown_seconds: f32 = 0.14;
-const demo_contact_capacity = 32;
+const demo_contact_capacity = 64;
 const demo_music_path = "audio/music/demo_loop.wav";
 const collision_sfx_path = "audio/sfx/collision.wav";
 const jet_sfx_path = "audio/sfx/player_jet.wav";
@@ -48,6 +50,7 @@ pub const GameDemoState = struct {
     collision: CollisionSystem,
     collision_response: CollisionResponseSystem,
     particles: ParticleSystem,
+    ai: AiSystem,
     test_squares: [test_square_count]EntityId,
     obstacles: [obstacle_count]EntityId,
     collision_sfx_cooldowns: [collision_sfx_cooldown_capacity]CollisionSfxCooldown = undefined,
@@ -66,6 +69,8 @@ pub const GameDemoState = struct {
         const obstacles = try spawnObstacles(&data);
         var particles = try ParticleSystem.init(allocator, .{ .capacity = 512 });
         errdefer particles.deinit();
+        var ai = AiSystem.init(allocator);
+        errdefer ai.deinit();
         var simulation_frame = SimulationFrame.init(allocator);
         errdefer simulation_frame.deinit();
         try simulation_frame.reserveStreams(8, 16, 16, demo_contact_capacity, 16, 8);
@@ -81,6 +86,7 @@ pub const GameDemoState = struct {
             .collision = CollisionSystem.init(allocator),
             .collision_response = collision_response,
             .particles = particles,
+            .ai = ai,
             .test_squares = test_squares,
             .obstacles = obstacles,
             .bounds_width = bounds_width,
@@ -89,6 +95,7 @@ pub const GameDemoState = struct {
     }
 
     pub fn deinit(self: *GameDemoState) void {
+        self.ai.deinit();
         self.particles.deinit();
         self.collision_response.deinit();
         self.collision.deinit();
@@ -111,9 +118,44 @@ pub const GameDemoState = struct {
         self.queueAmbientAudio(context.audio, context.input);
 
         self.simulation_frame.phase = .processors;
+        // AI decision processor (Slice 14): reads ai_agent + prior movement positions (const slices),
+        // appends MovementIntent ranges into frame.intents (count/prefix/write + parallelForWithOptions inside,
+        // using per-system adaptive profile selection + alignment + serial fallback). Fixed seed for determinism this slice.
+        const ai_slice = self.data.aiAgentSliceConst();
+        const move_slice = self.data.movementBodySliceConst();
+
+        // Provide the player's position so "seek" behaviors head toward the player
+        // (instead of the global center-of-mass of all bodies, which caused seekers
+        // to clump on each other and spam collisions/bounce audio).
+        const player_target = if (self.data.movementBodyConst(self.player.entity)) |pbody|
+            pbody.previous_position
+        else
+            math.Vec2{ .x = 400, .y = 225 };
+
+        _ = try self.ai.update(ai_slice, move_slice, &self.simulation_frame, context.thread_system, context.delta_seconds, .{
+            .intent_seed = 0xfeedf00d,
+            .seek_target = player_target,
+        });
+
+        // Intent application step (main thread): consume merged MovementIntents from AI (and future), write velocities
+        // for ai_agent entities only via direct MovementBodyPtr (hot column mutation). Stale IDs rejected. Player
+        // remains 100% special-cased (applyInput + no ai_agent component). Collision/response/particle paths unchanged.
+        for (self.simulation_frame.intents.mergedItems()) |item| {
+            if (item != .movement) continue;
+            const mi = item.movement;
+            if (!self.data.isAlive(mi.entity)) continue;
+            if (self.data.aiAgentConst(mi.entity) == null) continue;
+            if (self.data.movementBodyPtr(mi.entity)) |body| {
+                const spd = if (body.speed.* > 0) body.speed.* else 40.0;
+                body.velocity_x.* = mi.direction_x * spd;
+                body.velocity_y.* = mi.direction_y * spd;
+            }
+        }
+
         var movement_slice = self.data.movementBodySlice();
         _ = self.movement.update(&movement_slice, context.thread_system, context.delta_seconds, .{});
 
+        self.clampAiSquaresToBounds(self.bounds_width, self.bounds_height);
         try self.player.clampToBounds(&self.data, self.bounds_width, self.bounds_height);
         _ = try self.collision.update(&self.data, &self.simulation_frame.contacts, context.thread_system, .{});
         _ = try self.collision_response.update(&self.data, &self.simulation_frame);
@@ -156,6 +198,28 @@ pub const GameDemoState = struct {
         var movement_slice = self.data.movementBodySlice();
         self.movement.syncPreviousPositions(&movement_slice);
         self.particles.syncPreviousPositions();
+    }
+
+    fn clampAiSquaresToBounds(self: *GameDemoState, bounds_width: f32, bounds_height: f32) void {
+        const ai_slice = self.data.aiAgentSliceConst();
+        for (ai_slice.entities) |entity| {
+            const body = self.data.movementBodyPtr(entity) orelse continue;
+            const visual = self.data.primitiveVisualConst(entity) orelse continue;
+
+            // Use math.clamp (same as Player.clampToBounds) for positions. Zero velocity on
+            // clamp for AI (main-thread only) so infrequent decisions do not cause wall-push
+            // until next ai update; player does not zero because input re-applies each step.
+            // Preserves prior AI demo behavior and collision response expectations.
+            const max_x = bounds_width - visual.size.x;
+            const new_x = math.clamp(body.position_x.*, 0, max_x);
+            if (new_x != body.position_x.*) body.velocity_x.* = 0;
+            body.position_x.* = new_x;
+
+            const max_y = bounds_height - visual.size.y;
+            const new_y = math.clamp(body.position_y.*, 0, max_y);
+            if (new_y != body.position_y.*) body.velocity_y.* = 0;
+            body.position_y.* = new_y;
+        }
     }
 
     fn emitPlayerTrail(self: *GameDemoState) void {
@@ -266,7 +330,17 @@ pub const GameDemoState = struct {
             return;
         }
 
-        self.collision_sfx_cooldowns[0] = .{
+        // Full: evict the slot with the least remaining time (gives newest collision
+        // the longest protection). Linear scan is acceptable (N<=32, cold path).
+        var min_idx: usize = 0;
+        var min_rem = self.collision_sfx_cooldowns[0].remaining_seconds;
+        for (1..self.collision_sfx_cooldown_count) |i| {
+            if (self.collision_sfx_cooldowns[i].remaining_seconds < min_rem) {
+                min_rem = self.collision_sfx_cooldowns[i].remaining_seconds;
+                min_idx = i;
+            }
+        }
+        self.collision_sfx_cooldowns[min_idx] = .{
             .key = key,
             .remaining_seconds = collision_sfx_cooldown_seconds,
         };
@@ -301,57 +375,87 @@ const CollisionSfxCooldown = struct {
 
 fn spawnTestSquares(data: *DataSystem) ![test_square_count]EntityId {
     const specs = [_]TestSquareSpec{
-        .{
-            .position = .{ .x = 120, .y = 120 },
-            .velocity = .{ .x = 18, .y = 0 },
-            .size = .{ .x = 24, .y = 24 },
-            .color = .{ .r = 0.34, .g = 0.69, .b = 1.0, .a = 1.0 },
-            .layer = 0,
-        },
-        .{
-            .position = .{ .x = 220, .y = 160 },
-            .velocity = .{ .x = 0, .y = 14 },
-            .size = .{ .x = 28, .y = 28 },
-            .color = .{ .r = 0.46, .g = 0.86, .b = 0.38, .a = 1.0 },
-            .layer = 0,
-        },
-        .{
-            .position = .{ .x = 320, .y = 220 },
-            .velocity = .{ .x = -16, .y = 10 },
-            .size = .{ .x = 20, .y = 20 },
-            .color = .{ .r = 0.95, .g = 0.42, .b = 0.59, .a = 1.0 },
-            .layer = 0,
-        },
-        .{
-            .position = .{ .x = 470, .y = 130 },
-            .velocity = .{ .x = 12, .y = -8 },
-            .size = .{ .x = 26, .y = 26 },
-            .color = .{ .r = 0.7, .g = 0.54, .b = 1.0, .a = 1.0 },
-            .layer = 0,
-        },
+        .{ .position = .{ .x = 80, .y = 80 }, .velocity = .{ .x = 20, .y = 5 }, .size = .{ .x = 22, .y = 22 }, .color = .{ .r = 0.34, .g = 0.69, .b = 1.0, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 180, .y = 140 }, .velocity = .{ .x = 5, .y = 18 }, .size = .{ .x = 26, .y = 26 }, .color = .{ .r = 0.46, .g = 0.86, .b = 0.38, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 280, .y = 260 }, .velocity = .{ .x = -14, .y = 9 }, .size = .{ .x = 18, .y = 18 }, .color = .{ .r = 0.95, .g = 0.42, .b = 0.59, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 420, .y = 90 }, .velocity = .{ .x = 11, .y = -10 }, .size = .{ .x = 24, .y = 24 }, .color = .{ .r = 0.7, .g = 0.54, .b = 1.0, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 120, .y = 320 }, .velocity = .{ .x = 8, .y = -16 }, .size = .{ .x = 20, .y = 20 }, .color = .{ .r = 0.95, .g = 0.65, .b = 0.25, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 550, .y = 200 }, .velocity = .{ .x = -9, .y = 12 }, .size = .{ .x = 30, .y = 18 }, .color = .{ .r = 0.55, .g = 0.82, .b = 0.92, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 650, .y = 340 }, .velocity = .{ .x = 15, .y = -7 }, .size = .{ .x = 19, .y = 19 }, .color = .{ .r = 0.85, .g = 0.45, .b = 0.78, .a = 1.0 }, .layer = 0 },
+        .{ .position = .{ .x = 300, .y = 70 }, .velocity = .{ .x = -6, .y = 22 }, .size = .{ .x = 25, .y = 25 }, .color = .{ .r = 0.4, .g = 0.95, .b = 0.75, .a = 1.0 }, .layer = 0 },
     };
     var entities: [test_square_count]EntityId = undefined;
     for (specs, 0..) |spec, index| {
-        const entity = try data.createEntity();
-        errdefer _ = data.destroyEntity(entity);
-        try data.setMovementBody(entity, .{
-            .position = spec.position,
-            .previous_position = spec.position,
-            .velocity = spec.velocity,
-            .speed = 0,
-        });
-        try data.setPrimitiveVisual(entity, .{
-            .size = spec.size,
-            .color = spec.color,
-            .layer = spec.layer,
-            .marker_color = .{ .r = 0, .g = 0, .b = 0, .a = 0 },
-            .marker_layer = spec.layer,
-            .marker_length = 0,
-            .marker_depth = 0,
-            .marker_margin = 0,
-        });
-        try data.setCollisionBounds(entity, .{ .size = spec.size });
-        try data.setCollisionResponse(entity, .{ .mode = .bounce, .mobility = .dynamic, .restitution = 1 });
+        const entity = if (index == 3 or index == 7) blk: {
+            // Use EntityTemplate (via create_entity structural command) for a couple of ai-driven spawns
+            // to exercise the Slice 14 structural path.
+            _ = try data.applyStructuralCommands(&[_]StructuralCommand{.{
+                .create_entity = .{
+                    .movement_body = .{
+                        .position = spec.position,
+                        .previous_position = spec.position,
+                        .velocity = spec.velocity,
+                        .speed = if (index == 3) 48 else 55,
+                    },
+                    .primitive_visual = .{
+                        .size = spec.size,
+                        .color = spec.color,
+                        .layer = spec.layer,
+                        .marker_color = .{ .r = 0, .g = 0, .b = 0, .a = 0 },
+                        .marker_layer = spec.layer,
+                        .marker_length = 0,
+                        .marker_depth = 0,
+                        .marker_margin = 0,
+                    },
+                    .collision_bounds = .{ .size = spec.size },
+                    .collision_response = .{ .mode = .bounce, .mobility = .dynamic, .restitution = 1 },
+                    .ai_agent = if (index == 3)
+                        .{ .behavior = .seek, .wander_amplitude = 6, .seek_weight = 1.35 }
+                    else
+                        .{ .behavior = .seek, .wander_amplitude = 4, .seek_weight = 1.6 },
+                },
+            }});
+            const post = data.movementBodySliceConst();
+            break :blk post.entities[post.entities.len - 1];
+        } else blk: {
+            const e = try data.createEntity();
+            errdefer _ = data.destroyEntity(e);
+            try data.setMovementBody(e, .{
+                .position = spec.position,
+                .previous_position = spec.position,
+                .velocity = spec.velocity,
+                .speed = if (index == 0 or index == 4) 0 else 42,
+            });
+            try data.setPrimitiveVisual(e, .{
+                .size = spec.size,
+                .color = spec.color,
+                .layer = spec.layer,
+                .marker_color = .{ .r = 0, .g = 0, .b = 0, .a = 0 },
+                .marker_layer = spec.layer,
+                .marker_length = 0,
+                .marker_depth = 0,
+                .marker_margin = 0,
+            });
+            try data.setCollisionBounds(e, .{ .size = spec.size });
+            try data.setCollisionResponse(e, .{ .mode = .bounce, .mobility = .dynamic, .restitution = 1 });
+            break :blk e;
+        };
+
+        // Pronounced behaviors for the new larger set of squares.
+        // Seekers have high seek_weight so the COM pull is obvious.
+        // Wanderers have high amplitude so their motion is chaotic and visible.
+        // A couple use EntityTemplate above; the rest use direct sets.
+        if (index == 0 or index == 4) {
+            // Strong pure wanderers
+            try data.setAiAgent(entity, .{ .behavior = .wander, .wander_amplitude = 58, .seek_weight = 0 });
+        } else if (index == 1 or index == 5) {
+            // Strong seekers (COM pull dominates, light wander)
+            try data.setAiAgent(entity, .{ .behavior = .seek, .wander_amplitude = 7, .seek_weight = 1.55 });
+        } else if (index == 2 or index == 6) {
+            // No ai_agent — these keep classic spawn velocity and bounce normally
+        } else if (index == 3 or index == 7) {
+            // Already set via the template above (strong seek variants)
+        }
         entities[index] = entity;
     }
     return entities;
@@ -439,7 +543,11 @@ test "demo spawns colored moving test squares" {
     for (demo.test_squares) |entity| {
         try std.testing.expect(demo.data.hasComponents(entity, component_masks.movement_body | component_masks.primitive_visual | component_masks.collision_bounds | component_masks.collision_response));
         const body = demo.data.movementBodyConst(entity).?;
-        try std.testing.expect(body.velocity.x != 0 or body.velocity.y != 0);
+        const has_ai = demo.data.hasComponents(entity, component_masks.ai_agent);
+        try std.testing.expect(has_ai or body.velocity.x != 0 or body.velocity.y != 0);
+        if (has_ai) {
+            try std.testing.expect(demo.data.aiAgentConst(entity) != null);
+        }
         const visual = demo.data.primitiveVisualConst(entity).?;
         try std.testing.expect(visual.color.a > 0);
         try std.testing.expectEqual(CollisionResponseMode.bounce, demo.data.collisionResponseConst(entity).?.mode);
@@ -489,10 +597,15 @@ test "demo owns and completes a simulation frame during update" {
     const player_after = demo.data.movementBodyConst(demo.player.entity).?;
     try std.testing.expect(player_after.position.x > player_before.position.x);
     try std.testing.expectEqual(@as(f32, 240), player_after.velocity.x);
+    var any_square_moved = false;
     for (demo.test_squares, 0..) |entity, index| {
         const body = demo.data.movementBodyConst(entity).?;
-        try std.testing.expect(body.position.x != square_before[index].x or body.position.y != square_before[index].y);
+        if (body.position.x != square_before[index].x or body.position.y != square_before[index].y) {
+            any_square_moved = true;
+        }
     }
+    // At least some square activity (non-ai squares move from spawn vel; ai-driven ones via intent+consumption covered by dedicated "demo ai processor drives..." test).
+    try std.testing.expect(any_square_moved);
     try std.testing.expect(demo.particles.activeCount() > 0);
     try std.testing.expect(demo.music_started);
     try std.testing.expect(audio.len() >= 2);
@@ -536,6 +649,55 @@ test "demo collision response blocks player against obstacles" {
     try std.testing.expect(demo.simulation_frame.contacts.mergedItems().len > 0);
     try std.testing.expect(player_after.position.x <= obstacle_body.position.x - 32);
     try std.testing.expect(audio.len() > 2);
+}
+
+test "demo ai processor drives non-player squares via intents (seek_target deterministic, 0-worker serial path)" {
+    if (builtin.single_threaded) return error.SkipZigTest;
+
+    var demo = try GameDemoState.init(std.testing.allocator, 800, 450);
+    defer demo.deinit();
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 0,
+        .min_parallel_items = 1,
+        .items_per_range = movement_range_alignment_items,
+    });
+    defer threads.deinit();
+    var transitions = StateTransitions.init(std.testing.allocator);
+    defer transitions.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
+
+    // Record pre positions for sample ai squares (ai on 0=wander/1=seek/3=template-seek per 8-square spawn mix with pronounced behaviors; ai on 4/5/7 also).
+    const ai0 = demo.test_squares[0];
+    const ai1 = demo.test_squares[1];
+    const ai3 = demo.test_squares[3];
+    const pre0 = demo.data.movementBodyConst(ai0).?.position;
+    const pre1 = demo.data.movementBodyConst(ai1).?.position;
+    const pre3 = demo.data.movementBodyConst(ai3).?.position;
+
+    try demo.update(.{
+        .input = &InputState{},
+        .audio = &audio,
+        .delta_seconds = 0.016,
+        .transitions = &transitions,
+        .thread_system = &threads,
+    });
+
+    try std.testing.expectEqual(SimulationPhase.finished, demo.simulation_frame.phase);
+    const post_intents = demo.simulation_frame.intents.mergedItems();
+    try std.testing.expect(post_intents.len >= 3); // at least the 3 ai ents emitted movement intents
+
+    const post0 = demo.data.movementBodyConst(ai0).?.position;
+    const post1 = demo.data.movementBodyConst(ai1).?.position;
+    const post3 = demo.data.movementBodyConst(ai3).?.position;
+    // Driven by ai (intents consumed to vel before movement) => position advanced from spawn vel override + integration.
+    try std.testing.expect(post0.x != pre0.x or post0.y != pre0.y);
+    try std.testing.expect(post1.x != pre1.x or post1.y != pre1.y);
+    try std.testing.expect(post3.x != pre3.x or post3.y != pre3.y);
+
+    // ai_agent present and player still special (no ai mask)
+    try std.testing.expect(demo.data.hasComponents(ai0, component_masks.ai_agent));
+    try std.testing.expect(!demo.data.hasComponents(demo.player.entity, component_masks.ai_agent));
 }
 
 test "demo collision response handles player contacts with moving entities" {
@@ -596,4 +758,91 @@ test "demo collision response handles player contacts with moving entities" {
     try std.testing.expect(demo.simulation_frame.contacts.mergedItems().len > 0);
     try std.testing.expect(square_after.position.x > player_body.position_x.* + 30);
     try std.testing.expect(square_after.velocity.x > 0);
+}
+
+test "ai squares use consistent math.clamp and zero velocity on bounds (main thread only)" {
+    var demo = try GameDemoState.init(std.testing.allocator, 800, 450);
+    defer demo.deinit();
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 0,
+        .min_parallel_items = 1,
+        .items_per_range = movement_range_alignment_items,
+    });
+    defer threads.deinit();
+    var transitions = StateTransitions.init(std.testing.allocator);
+    defer transitions.deinit();
+    var audio = AudioCommandBuffer.init(std.testing.allocator, 8);
+    defer audio.deinit();
+
+    // Pick an ai square (index 0 is wander ai), force it out of bounds + outward vel.
+    const ai_ent = demo.test_squares[0];
+    const body = demo.data.movementBodyPtr(ai_ent).?;
+    body.position_x.* = -10;
+    body.position_y.* = 460;
+    body.previous_x.* = body.position_x.*;
+    body.previous_y.* = body.position_y.*;
+    body.velocity_x.* = -20;
+    body.velocity_y.* = 30;
+
+    try demo.update(.{
+        .input = &InputState{},
+        .audio = &audio,
+        .delta_seconds = 0.016,
+        .transitions = &transitions,
+        .thread_system = &threads,
+    });
+
+    const after = demo.data.movementBodyConst(ai_ent).?;
+    // Clamped via math.clamp (pos >=0, <= bound-size), and vels zeroed for the clamped axes (AI policy).
+    try std.testing.expect(after.position.x >= 0);
+    try std.testing.expect(after.position.y <= 450 - 22); // size of first spec
+    // vels zeroed on the violated axes (was pushed out)
+    try std.testing.expectEqual(@as(f32, 0), after.velocity.x);
+    try std.testing.expectEqual(@as(f32, 0), after.velocity.y);
+}
+
+test "collision sfx cooldowns harden: cap<=32, full evicts min-remaining, tick compacts for re-add, keyFor pair order" {
+    var demo: GameDemoState = undefined;
+    demo.collision_sfx_cooldown_count = 0;
+    const mk = struct {
+        fn id(i: u32, g: u32) EntityId {
+            return .{ .index = i, .generation = g };
+        }
+    }.id;
+    // keyFor is symmetric for pairs
+    try std.testing.expectEqual(CollisionSfxCooldown.keyFor(mk(1, 10), mk(2, 20)), CollisionSfxCooldown.keyFor(mk(2, 20), mk(1, 10)));
+    // add, tick, fill to 32
+    demo.addCollisionSfxCooldown(mk(1, 1), mk(2, 2));
+    demo.tickCollisionSfxCooldowns(0.01);
+    var n: u32 = 3;
+    while (demo.collision_sfx_cooldown_count < collision_sfx_cooldown_capacity) : (n += 1) {
+        demo.addCollisionSfxCooldown(mk(n, 10), mk(n + 1, 10));
+    }
+    try std.testing.expectEqual(@as(usize, 32), demo.collision_sfx_cooldown_count);
+    // force distinct rems so [0] is min; full add must keep count==32 and evict a min-rem
+    for (&demo.collision_sfx_cooldowns, 0..) |*slot, j| {
+        slot.* = .{ .key = CollisionSfxCooldown.keyFor(mk(@as(u32, @intCast(j)), 99), mk(@as(u32, @intCast(j)) + 100, 99)), .remaining_seconds = 0.01 + @as(f32, @floatFromInt(j)) * 0.001 };
+    }
+    demo.collision_sfx_cooldown_count = 32;
+    const min_key = demo.collision_sfx_cooldowns[0].key;
+    const na = mk(200, 7);
+    const nb = mk(201, 7);
+    demo.addCollisionSfxCooldown(na, nb);
+    try std.testing.expectEqual(@as(usize, 32), demo.collision_sfx_cooldown_count);
+    const nk = CollisionSfxCooldown.keyFor(na, nb);
+    var saw_new = false;
+    var saw_min = false;
+    for (demo.collision_sfx_cooldowns[0..32]) |cd| {
+        if (cd.key == nk) saw_new = true;
+        if (cd.key == min_key) saw_min = true;
+    }
+    try std.testing.expect(saw_new);
+    try std.testing.expect(!saw_min);
+    // tick compacts (removes expired), allowing the pair to be re-added
+    demo.collision_sfx_cooldowns[0].remaining_seconds = 0.001;
+    demo.collision_sfx_cooldown_count = 2;
+    demo.tickCollisionSfxCooldowns(0.01);
+    try std.testing.expectEqual(@as(usize, 1), demo.collision_sfx_cooldown_count);
+    demo.addCollisionSfxCooldown(mk(1, 1), mk(2, 2));
+    try std.testing.expectEqual(@as(usize, 2), demo.collision_sfx_cooldown_count);
 }

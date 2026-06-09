@@ -102,20 +102,24 @@ zig build verify
 ## Benchmarks
 
 `zig build bench` runs non-interactive CPU benchmarks for movement bodies,
-transient particle rows, dense collision bodies, sparse collision bodies, and
-collision-response contacts. The default run exercises one serial baseline,
+transient particle rows, AI agents, dense collision bodies, sparse collision
+bodies, and collision-response contacts. The default run exercises one serial baseline,
 fixed-worker, fixed small-range, fixed large-range, and adaptive cases so the
 full processor flow can be checked for regressions.
 `thread-adaptive-fixed-range` isolates adaptive worker-count selection with a
 fixed range size, while `thread-adaptive-tuned-range` uses the same
 processor-owned adaptive worker and range tuner path as production systems. The
 fixed cases are controls for scheduler overhead, worker-count scaling, and
-range-size effects. The default quick profile keeps collision coverage short: dense and
-sparse collision each run one representative body count, while collision-response
-modes run small and medium contact counts. Standard and stress profiles keep the
-heavier collision sweeps.
+range-size effects. The default quick profile keeps collision coverage short:
+dense and sparse collision each run one representative body count, while
+collision-response modes run small and medium contact counts. AI sweeps
+128-1,024 agents in the quick profile, 128-4,096 in standard, and 512-8,192 in
+stress. These counts stay below movement/particle counts because the current AI
+processor precomputes pairwise local separation on the main thread before worker
+range emission, so that setup grows as `agent_count * (agent_count - 1)`.
 Collision output includes candidate-pair and contact counts so dense stress
-cases can be compared against sparse gameplay-shaped distributions.
+cases can be compared against sparse gameplay-shaped distributions. AI output
+reports pairwise separation checks and emitted movement-intent counts.
 
 Benchmark output is grouped by workload and count. Each block prints an aligned
 plain-text table with per-case timing, speedup, throughput, worker-thread use,
@@ -154,6 +158,7 @@ zig build bench -- --profile quick
 zig build bench -- --profile standard --iterations 100
 zig build bench -- --case thread-adaptive-tuned-range
 zig build bench -- --group movement --items 65536 --details
+zig build bench -- --group ai --details
 zig build bench -- --details
 ```
 

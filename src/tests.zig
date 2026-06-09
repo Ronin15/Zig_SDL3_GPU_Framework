@@ -19,6 +19,7 @@ comptime {
     _ = @import("app/state.zig");
     _ = @import("app/thread_system.zig");
     _ = @import("app/time_loop.zig");
+    _ = @import("benchmarks/ai.zig");
     _ = @import("benchmarks/collision.zig");
     _ = @import("benchmarks/collision_response.zig");
     _ = @import("benchmarks/suite.zig");

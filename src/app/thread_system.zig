@@ -135,6 +135,7 @@ pub const AdaptiveWorkTuner = struct {
     sample_total_ns: u128 = 0,
     failed_profile_count: usize = 0,
     settled_window_count: usize = 0,
+    inline_probe_cooldown_windows: usize = 0,
     last_item_count: usize = 0,
     last_range_alignment_items: usize = 1,
     last_request: ?AdaptiveWorkRequest = null,
@@ -263,12 +264,18 @@ pub const AdaptiveWorkTuner = struct {
             self.current_profile = candidate;
             self.baseline_mean_batch_duration_ns = sample_mean_ns;
             self.failed_profile_count = 0;
+            self.inline_probe_cooldown_windows = 0;
             self.startPredictedProbe(candidate, sample_mean_ns);
             return;
         }
 
         self.failed_profile_count += 1;
-        if (!self.has_threaded_profile or self.failed_profile_count >= self.config.settle_after_failed_profiles) {
+        if (!self.has_threaded_profile) {
+            self.inline_probe_cooldown_windows = self.config.retune_after_settled_windows;
+            self.settle();
+            return;
+        }
+        if (self.failed_profile_count >= self.config.settle_after_failed_profiles) {
             self.settle();
             return;
         }
@@ -284,6 +291,10 @@ pub const AdaptiveWorkTuner = struct {
 
         if (profile.worker_threads == 0) {
             if (sample_mean_ns >= self.config.threaded_batch_ns) {
+                if (self.inline_probe_cooldown_windows > 0) {
+                    self.inline_probe_cooldown_windows -= 1;
+                    return;
+                }
                 self.startPredictedProbe(profile, sample_mean_ns);
             }
             return;
@@ -486,6 +497,7 @@ pub const AdaptiveWorkTuner = struct {
         self.baseline_mean_batch_duration_ns = 0;
         self.failed_profile_count = 0;
         self.settled_window_count = 0;
+        self.inline_probe_cooldown_windows = 0;
         self.resetSamples();
     }
 
@@ -1550,6 +1562,42 @@ test "adaptive work tuner keeps inline when first threaded probe loses" {
     try std.testing.expectEqual(@as(?AdaptiveWorkProfile, null), report.candidate_profile);
     try std.testing.expectEqual(@as(usize, 0), tuner.selectProfile(tunerTestRequest(1024, 4, 16, 64)).worker_threads);
     try std.testing.expect(tuner.isSettled());
+}
+
+test "adaptive work tuner cools down after failed inline threaded probe" {
+    var tuner = AdaptiveWorkTuner.init(.{
+        .initial_items_per_range = 64,
+        .min_items_per_range = 16,
+        .max_items_per_range = 256,
+        .sample_window = 1,
+        .improvement_threshold_percent = 5,
+        .threaded_batch_ns = 1000,
+        .retune_after_settled_windows = 2,
+    });
+    const request = tunerTestRequest(1024, 4, 16, 64);
+
+    const inline_profile = tuner.selectProfile(request);
+    tuner.record(tunerTestBatchWithProfile(1024, inline_profile, 1_000_000));
+    const first_candidate = tuner.selectProfile(request);
+    try std.testing.expect(first_candidate.worker_threads > 0);
+    tuner.record(tunerTestBatchWithProfile(1024, first_candidate, 960_000));
+    try std.testing.expect(tuner.isSettled());
+
+    const first_cooldown_inline = tuner.selectProfile(request);
+    try std.testing.expectEqual(@as(usize, 0), first_cooldown_inline.worker_threads);
+    tuner.record(tunerTestBatchWithProfile(1024, first_cooldown_inline, 1_000_000));
+    try std.testing.expect(tuner.isSettled());
+
+    const second_cooldown_inline = tuner.selectProfile(request);
+    try std.testing.expectEqual(@as(usize, 0), second_cooldown_inline.worker_threads);
+    tuner.record(tunerTestBatchWithProfile(1024, second_cooldown_inline, 1_000_000));
+    try std.testing.expect(tuner.isSettled());
+
+    const retry_inline = tuner.selectProfile(request);
+    try std.testing.expectEqual(@as(usize, 0), retry_inline.worker_threads);
+    tuner.record(tunerTestBatchWithProfile(1024, retry_inline, 1_000_000));
+    try std.testing.expectEqual(AdaptiveWorkPhase.probing, tuner.report().phase);
+    try std.testing.expect(tuner.report().candidate_profile.?.worker_threads > 0);
 }
 
 test "adaptive work tuner resets sample window after item count shift" {

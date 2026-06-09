@@ -801,8 +801,10 @@ Architecture notes:
   filtering, and emits range-owned candidate pairs once before deterministic
   merge.
 - Narrowphase is a separate threaded batch: worker ranges SIMD-compute contact
-  math over candidate pairs, then compact contacts deterministically for the
-  same-step response stream.
+  math over candidate pairs, then merge range-owned contact buffers
+  deterministically for the same-step response stream.
+- Thread-written broadphase and narrowphase range scratch is 64-byte padded;
+  persistent collision component storage remains dense and unpadded by default.
 - Broadphase and narrowphase keep separate adaptive tuners and batch stats; no
   combined timing trains either stage. Inline stage measurements still train the
   owning stage tuner, so a later expensive window can switch that stage to

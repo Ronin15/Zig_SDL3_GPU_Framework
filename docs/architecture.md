@@ -227,11 +227,13 @@ proxy scratch, preserves a sorted sweep-and-prune order across fixed steps, and
 threads broadphase anchor ranges through `ThreadSystem` to emit candidate pairs
 once with SIMD Y-overlap filtering. Narrowphase then uses its own threaded batch
 over candidate pairs, computes AABB contact math with SIMD lanes inside each
-worker range, and compacts valid contacts deterministically for same-step
-response. Broadphase and narrowphase keep separate adaptive tuners and batch
-stats so each stage is measured against its own workload; benchmark detail rows
-report narrowphase separately so an inline narrowphase cannot be mistaken for a
-broadphase tuning result.
+worker range, and merges range-owned contact buffers deterministically for
+same-step response. Thread-written range scratch is cache-line padded;
+persistent collision component data is not padded by default. Broadphase and
+narrowphase keep separate adaptive tuners and batch stats so each stage is
+measured against its own workload; benchmark detail rows report narrowphase
+separately so an inline narrowphase cannot be mistaken for a broadphase tuning
+result.
 Contacts are transient `SimulationFrame` data; `CollisionResponseSystem`
 consumes the completed same-step contact stream through explicit response-policy
 components, computes aligned correction columns with `src/core/simd.zig`, and

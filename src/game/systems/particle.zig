@@ -892,7 +892,8 @@ test "particle system owns adaptive tuner for default update" {
     }
 
     try std.testing.expectEqual(particle_range_alignment_items * 8, stats.active_before);
-    try std.testing.expect(particles.adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expect(particles.adaptive_tuner.report().baseline_mean_batch_duration_ns > 0);
+    try std.testing.expect(!particles.adaptive_tuner.report().has_threaded_profile);
     try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
 }
 
@@ -918,7 +919,8 @@ test "particle update uses provided adaptive tuner" {
     });
 
     try std.testing.expectEqual(particle_range_alignment_items * 8, stats.active_before);
-    try std.testing.expect(adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expect(adaptive_tuner.report().baseline_mean_batch_duration_ns > 0);
+    try std.testing.expect(!adaptive_tuner.report().has_threaded_profile);
     try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
 }
 

@@ -290,7 +290,8 @@ test "movement system owns adaptive tuner for default update" {
         });
     }
 
-    try std.testing.expect(system.adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expect(system.adaptive_tuner.report().baseline_mean_batch_duration_ns > 0);
+    try std.testing.expect(!system.adaptive_tuner.report().has_threaded_profile);
     try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
     try std.testing.expectEqual(gameData.movementBodySliceConst().entities.len, stats.body_count);
 }
@@ -318,7 +319,8 @@ test "movement update uses provided adaptive tuner" {
     });
 
     try std.testing.expectEqual(gameData.movementBodySliceConst().entities.len, stats.body_count);
-    try std.testing.expect(adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    try std.testing.expect(adaptive_tuner.report().baseline_mean_batch_duration_ns > 0);
+    try std.testing.expect(!adaptive_tuner.report().has_threaded_profile);
     try std.testing.expectEqual(@as(u64, 0), threads.adaptive_tuner.report().best_mean_batch_duration_ns);
 }
 

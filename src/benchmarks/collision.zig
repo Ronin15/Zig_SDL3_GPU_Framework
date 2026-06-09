@@ -129,6 +129,7 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     var stats = accumulator.finish();
     stats.candidate_pairs = last_collision_stats.candidate_pair_count;
     stats.output_count = last_collision_stats.contact_count;
+    stats.secondary_batch = suite.batchSummaryFromBatch(last_collision_stats.narrowphase_batch);
     if (case.adaptive) {
         stats.work_tuning = suite.workTuningSummary(system.broadphase_tuner.report(), settled_before_measurement);
     }

@@ -158,6 +158,7 @@ pub const RunStats = struct {
     max_ns: u64 = 0,
     items_per_second: u64 = 0,
     batch: BatchSummary = .{},
+    secondary_batch: ?BatchSummary = null,
     work_tuning: ?WorkTuningSummary = null,
 
     pub fn skipped(reason: []const u8) RunStats {
@@ -167,6 +168,23 @@ pub const RunStats = struct {
         };
     }
 };
+
+pub fn batchSummaryFromBatch(batch: BatchStats) BatchSummary {
+    return .{
+        .item_count = batch.item_count,
+        .range_count = batch.range_count,
+        .items_per_range = batch.items_per_range,
+        .range_alignment_items = batch.range_alignment_items,
+        .available_worker_threads = batch.available_worker_threads,
+        .active_worker_threads = batch.active_worker_threads,
+        .main_thread_ranges = batch.main_thread_ranges,
+        .worker_thread_ranges = batch.worker_thread_ranges,
+        .worker_utilization_percent = @intFromFloat(batch.worker_utilization * 100.0),
+        .batch_duration_ns = batch.batch_duration_ns,
+        .main_thread_wait_ns = batch.main_thread_wait_ns,
+        .ran_inline = batch.ran_inline,
+    };
+}
 
 const CaseResult = struct {
     case: BenchmarkCase,
@@ -206,6 +224,7 @@ pub const WorkTuningSummary = struct {
     settled_before_measurement: bool = false,
     best_mean_batch_duration_ns: u64 = 0,
     baseline_mean_batch_duration_ns: u64 = 0,
+    has_threaded_profile: bool = false,
     probing: bool = false,
 };
 
@@ -293,6 +312,7 @@ pub fn workTuningSummary(report: AdaptiveWorkReport, settled_before_measurement:
         .settled_before_measurement = settled_before_measurement,
         .best_mean_batch_duration_ns = report.best_mean_batch_duration_ns,
         .baseline_mean_batch_duration_ns = report.baseline_mean_batch_duration_ns,
+        .has_threaded_profile = report.has_threaded_profile,
         .probing = report.probing,
     };
 }
@@ -608,7 +628,7 @@ fn printDetailTable(group_name: []const u8, results: []const CaseResult, baselin
         var worker_ranges_buffer: [24]u8 = undefined;
         var items_per_range_buffer: [24]u8 = undefined;
         var tuning_buffer: [96]u8 = undefined;
-        var workload_buffer: [64]u8 = undefined;
+        var workload_buffer: [128]u8 = undefined;
 
         printCell(result.case.name, 30);
         printCell(formatDurationInto(&min_buffer, result.stats.min_ns), 11);
@@ -638,10 +658,14 @@ fn printValidationSummary(
 
     if (adaptive) |adaptive_result| {
         if (adaptive_result.stats.work_tuning) |summary| {
-            std.debug.print(
-                "adaptive phase={s} best_profile={}/{} final={}/{}. ",
-                .{ @tagName(summary.phase), summary.best_worker_threads, summary.best_items_per_range, summary.final_worker_threads, summary.final_items_per_range },
-            );
+            if (summary.has_threaded_profile) {
+                std.debug.print(
+                    "adaptive phase={s} best_profile={}/{} final={}/{}. ",
+                    .{ @tagName(summary.phase), summary.best_worker_threads, summary.best_items_per_range, summary.final_worker_threads, summary.final_items_per_range },
+                );
+            } else {
+                std.debug.print("adaptive phase={s} threaded_profile=none. ", .{@tagName(summary.phase)});
+            }
         }
         if (adaptive_result.stats.batch.active_worker_threads == 0) {
             std.debug.print(
@@ -786,6 +810,21 @@ fn formatUsizeInto(buffer: []u8, value: usize) []const u8 {
 
 fn formatWorkTuningInto(buffer: []u8, maybe_summary: ?WorkTuningSummary) []const u8 {
     const summary = maybe_summary orelse return "-";
+    if (!summary.has_threaded_profile) {
+        if (summary.candidate_items_per_range) |candidate| {
+            const candidate_workers = summary.candidate_worker_threads orelse 0;
+            return std.fmt.bufPrint(
+                buffer,
+                "{s} settled={s} threaded=none cand={}/{}",
+                .{ @tagName(summary.phase), yesNo(summary.settled_before_measurement), candidate_workers, candidate },
+            ) catch "work";
+        }
+        return std.fmt.bufPrint(
+            buffer,
+            "{s} settled={s} threaded=none",
+            .{ @tagName(summary.phase), yesNo(summary.settled_before_measurement) },
+        ) catch "work";
+    }
     if (summary.candidate_items_per_range) |candidate| {
         const candidate_workers = summary.candidate_worker_threads orelse 0;
         return std.fmt.bufPrint(
@@ -808,6 +847,15 @@ fn formatWorkloadInto(buffer: []u8, group_name: []const u8, stats: RunStats) []c
     }
     if (std.mem.startsWith(u8, group_name, "collision-response")) {
         return std.fmt.bufPrint(buffer, "triggers={} intents={}", .{ stats.candidate_pairs, stats.output_count }) catch "workload";
+    }
+    if (std.mem.startsWith(u8, group_name, "collision")) {
+        if (stats.secondary_batch) |narrow| {
+            return std.fmt.bufPrint(
+                buffer,
+                "candidates={} outputs={} narrow={}/{}",
+                .{ stats.candidate_pairs, stats.output_count, narrow.active_worker_threads, narrow.items_per_range },
+            ) catch "workload";
+        }
     }
     return std.fmt.bufPrint(buffer, "candidates={} outputs={}", .{ stats.candidate_pairs, stats.output_count }) catch "workload";
 }
@@ -1006,6 +1054,7 @@ test "benchmark table formatters keep compact text" {
             .final_worker_threads = 4,
             .final_items_per_range = 256,
             .settled_before_measurement = true,
+            .has_threaded_profile = true,
         }),
     );
 }

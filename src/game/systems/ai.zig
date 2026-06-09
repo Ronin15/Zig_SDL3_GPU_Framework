@@ -537,7 +537,7 @@ test "ai processor appends movement intents without clearing existing stream out
     try std.testing.expectEqual(entity.index, intents[1].movement.entity.index);
 }
 
-test "ai processor uses adaptive profile selection with default thread worker config" {
+test "ai processor uses committed adaptive threaded profile with default thread worker config" {
     if (@import("builtin").single_threaded) return error.SkipZigTest;
 
     var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
@@ -576,6 +576,9 @@ test "ai processor uses adaptive profile selection with default thread worker co
         .worker_threads = 1,
         .items_per_range = ai_range_alignment_items,
     };
+    adaptive_tuner.best_profile = adaptive_tuner.current_profile;
+    adaptive_tuner.has_threaded_profile = true;
+    adaptive_tuner.best_mean_batch_duration_ns = 1;
 
     const stats = try ai_sys.update(data.aiAgentSliceConst(), data.movementBodySliceConst(), &data, &frame, &threads, 0.016, .{
         .adaptive_tuner = &adaptive_tuner,

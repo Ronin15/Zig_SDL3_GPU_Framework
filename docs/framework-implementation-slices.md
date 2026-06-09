@@ -31,9 +31,9 @@ adding broad abstraction.
   it should process.
 - Slice 12 is now the gameplay-systems foundation for collision, AI intent,
   future path/query work, and deterministic rule outputs.
-- Before implementing grid pathfinding, fix and standardize multi-phase
-  processor batch timing so adaptive tuning records the full logical system
-  workload, not only one threaded sub-pass.
+- Before implementing grid pathfinding, keep multi-phase processor timing
+  explicit: each independently threaded stage either stays inline by design or
+  owns the adaptive tuner that measures that stage's exact batch.
 - Keep future gameplay systems built on Slice 12's typed processor outputs,
   deterministic merge, and deferred structural-change contracts.
 
@@ -804,7 +804,9 @@ Architecture notes:
   math over candidate pairs, then compact contacts deterministically for the
   same-step response stream.
 - Broadphase and narrowphase keep separate adaptive tuners and batch stats; no
-  combined timing trains either stage.
+  combined timing trains either stage. Inline stage measurements still train the
+  owning stage tuner, so a later expensive window can switch that stage to
+  worker threads without borrowing another stage's profile.
 - Collision response stays separate from detection; `CollisionResponseSystem`
   consumes the completed same-step contact stream through explicit
   response-policy components before structural commands commit.
@@ -884,6 +886,11 @@ Architecture notes:
 - Pathfinding should use read-only navigation or world snapshots during worker
   jobs and merge results deterministically before movement or response systems
   consume them.
+- Grid pathfinding should follow the multi-stage tuner pattern from collision
+  when stages have different cost shapes. Frontier expansion, neighbor scoring,
+  result/path reconstruction, and output emission should each either stay
+  serial/inline by design or own the adaptive tuner that measures that exact
+  batch. Do not force one timing profile to cover all pathfinding subpasses.
 
 Checklist:
 

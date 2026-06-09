@@ -160,6 +160,7 @@ pub const RunStats = struct {
     batch: BatchSummary = .{},
     secondary_batch: ?BatchSummary = null,
     work_tuning: ?WorkTuningSummary = null,
+    secondary_work_tuning: ?WorkTuningSummary = null,
 
     pub fn skipped(reason: []const u8) RunStats {
         return .{
@@ -850,6 +851,22 @@ fn formatWorkloadInto(buffer: []u8, group_name: []const u8, stats: RunStats) []c
     }
     if (std.mem.startsWith(u8, group_name, "collision")) {
         if (stats.secondary_batch) |narrow| {
+            const tuning = stats.secondary_work_tuning;
+            if (narrow.active_worker_threads == 0 or narrow.ran_inline) {
+                if (tuning) |summary| {
+                    const tuned = if (summary.has_threaded_profile) "threaded" else "none";
+                    return std.fmt.bufPrint(
+                        buffer,
+                        "candidates={} outputs={} narrow=inline tuned={s}",
+                        .{ stats.candidate_pairs, stats.output_count, tuned },
+                    ) catch "workload";
+                }
+                return std.fmt.bufPrint(
+                    buffer,
+                    "candidates={} outputs={} narrow=inline",
+                    .{ stats.candidate_pairs, stats.output_count },
+                ) catch "workload";
+            }
             return std.fmt.bufPrint(
                 buffer,
                 "candidates={} outputs={} narrow={}/{}",

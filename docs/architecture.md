@@ -154,9 +154,9 @@ submission does not allocate after initialization.
 Adaptive work tuning chooses a complete batch profile: inline or threaded,
 worker threads, and items per claimed range. Worker count and range size remain
 distinct knobs, but `AdaptiveWorkTuner` measures them together so one controller
-owns the decision. The tuner starts inline, probes a threaded profile when the
-measured inline window is expensive enough, then searches smaller and larger
-aligned range sizes around the best measured threaded profile before settling.
+owns the decision. The tuner starts inline, records that inline baseline for the
+owning batch, probes a threaded profile when the measured work is expensive
+enough, and only reports a best threaded profile after a threaded candidate wins.
 Reported `worker_threads` counts are background worker threads only; the main
 thread is not included in that count and may also process ranges while waiting
 for the batch barrier.
@@ -168,6 +168,16 @@ can still force explicit fixed profiles through `items_per_range`,
 frame batches, parked when idle, and joined during `ThreadSystem` shutdown.
 Processor-specific batches can align range starts to hot-column boundaries
 through `parallelForWithOptions`.
+
+Systems with multiple independently timed threaded stages own one tuner per
+stage. Do not train a shared stage profile across different work shapes, such as
+broadphase candidate generation and narrowphase contact validation, AI gather
+and decision emission, or future pathfinding frontier expansion and path
+reconstruction. If a stage preselects a profile before dispatch, it must pass
+the selected profile and the stage-owned tuner together so inline samples still
+train that stage before it decides whether to thread. Benchmark and diagnostics
+output should report inline stages as `inline`, not as a fake zero-worker range
+size.
 
 ## Gameplay Data
 
@@ -219,7 +229,9 @@ once with SIMD Y-overlap filtering. Narrowphase then uses its own threaded batch
 over candidate pairs, computes AABB contact math with SIMD lanes inside each
 worker range, and compacts valid contacts deterministically for same-step
 response. Broadphase and narrowphase keep separate adaptive tuners and batch
-stats so each stage is measured against its own workload.
+stats so each stage is measured against its own workload; benchmark detail rows
+report narrowphase separately so an inline narrowphase cannot be mistaken for a
+broadphase tuning result.
 Contacts are transient `SimulationFrame` data; `CollisionResponseSystem`
 consumes the completed same-step contact stream through explicit response-policy
 components, computes aligned correction columns with `src/core/simd.zig`, and

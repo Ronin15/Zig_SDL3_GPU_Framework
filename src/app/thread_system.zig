@@ -672,7 +672,7 @@ pub const ThreadSystem = struct {
         const min_parallel_items = options.min_parallel_items orelse self.config.min_parallel_items;
         const max_worker_threads = @min(options.max_worker_threads orelse self.workers.len, self.workers.len);
         const requested_items_per_range = @max(options.items_per_range orelse self.config.items_per_range, @as(usize, 1));
-        const adaptive_tuner = if (options.adaptive and max_worker_threads > 0)
+        const adaptive_tuner = if (options.adaptive and (max_worker_threads > 0 or options.selected_profile != null))
             if (options.selected_profile != null)
                 options.adaptive_tuner
             else if (options.items_per_range == null)
@@ -1267,6 +1267,42 @@ test "parallel for options record selected adaptive profile" {
     try std.testing.expectEqual(@as(usize, 16), stats.items_per_range);
     try std.testing.expect(adaptive_tuner.report().has_threaded_profile);
     try std.testing.expect(adaptive_tuner.report().best_mean_batch_duration_ns > 0);
+    for (&hits) |*hit| {
+        try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
+    }
+}
+
+test "parallel for options record selected inline adaptive profile" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+
+    var hits = [_]std.atomic.Value(u32){.{ .raw = 0 }} ** 128;
+    var context = CoverageContext{ .hits = hits[0..] };
+    var threads = try ThreadSystem.init(std.testing.allocator, std.testing.io, .{
+        .max_worker_threads = 2,
+        .min_parallel_items = 1,
+        .items_per_range = 64,
+    });
+    defer threads.deinit();
+
+    var adaptive_tuner = AdaptiveWorkTuner.init(.{
+        .sample_window = 1,
+        .threaded_batch_ns = std.math.maxInt(u64),
+    });
+    const stats = threads.parallelForWithOptions(hits.len, &context, markCoverage, .{
+        .adaptive_tuner = &adaptive_tuner,
+        .max_worker_threads = 0,
+        .selected_profile = .{
+            .worker_threads = 0,
+            .items_per_range = hits.len,
+        },
+    });
+
+    const report = adaptive_tuner.report();
+    try std.testing.expect(stats.ran_inline);
+    try std.testing.expectEqual(@as(usize, 0), stats.active_worker_threads);
+    try std.testing.expectEqual(AdaptiveWorkPhase.settled, report.phase);
+    try std.testing.expect(!report.has_threaded_profile);
+    try std.testing.expect(report.baseline_mean_batch_duration_ns > 0);
     for (&hits) |*hit| {
         try std.testing.expectEqual(@as(u32, 1), hit.load(.monotonic));
     }

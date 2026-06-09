@@ -118,8 +118,10 @@ stress. These counts stay below movement/particle counts because the current AI
 processor precomputes pairwise local separation on the main thread before worker
 range emission, so that setup grows as `agent_count * (agent_count - 1)`.
 Collision output includes candidate-pair and contact counts so dense stress
-cases can be compared against sparse gameplay-shaped distributions. AI output
-reports pairwise separation checks and emitted movement-intent counts.
+cases can be compared against sparse gameplay-shaped distributions. Detail rows
+also report narrowphase as `narrow=inline` or `narrow=worker_threads/items_per_range`
+because collision has independently tuned broadphase and narrowphase stages. AI
+output reports pairwise separation checks and emitted movement-intent counts.
 
 Benchmark output is grouped by workload and count. Each block prints an aligned
 plain-text table with per-case timing, speedup, throughput, worker-thread use,
@@ -151,6 +153,11 @@ tuning phase, and workload counters. In adaptive cases, low-count processors may
 stay inline until measured completion time shows that active worker threads are
 worth the synchronization cost; forced-inline batches are timing samples for
 that batch only and do not reset adaptive work-tuner state for later processors.
+For multi-stage systems, read each stage independently: an adaptive row can have
+a threaded primary batch while a secondary batch still reports `inline`, or both
+stages can settle on separate threaded profiles. This is expected when the
+stages have different work shapes, and it is the pattern future pathfinding and
+other multi-pass processors should follow.
 Use other optional arguments only to narrow or scale the run:
 
 ```sh

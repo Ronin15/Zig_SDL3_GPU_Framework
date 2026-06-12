@@ -115,7 +115,8 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
             _ = try runOnce(&system, &data, &contacts, if (threads) |*thread_system| thread_system else null, case);
         }
     }
-    const settled_before_measurement = if (case.adaptive) system.broadphase_tuner.isSettled() else false;
+    const broadphase_settled_before_measurement = if (case.adaptive) system.broadphase_tuner.isSettled() else false;
+    const narrowphase_settled_before_measurement = if (case.adaptive) system.narrowphase_tuner.isSettled() else false;
 
     var accumulator = suite.StatsAccumulator.init(item_count);
     var last_collision_stats = CollisionStats{};
@@ -131,8 +132,8 @@ fn runCaseWithMode(allocator: std.mem.Allocator, io: std.Io, options: suite.Opti
     stats.output_count = last_collision_stats.contact_count;
     stats.secondary_batch = suite.batchSummaryFromBatch(last_collision_stats.narrowphase_batch);
     if (case.adaptive) {
-        stats.work_tuning = suite.workTuningSummary(system.broadphase_tuner.report(), settled_before_measurement);
-        stats.secondary_work_tuning = suite.workTuningSummary(system.narrowphase_tuner.report(), system.narrowphase_tuner.isSettled());
+        stats.work_tuning = suite.workTuningSummary(system.broadphase_tuner.report(), broadphase_settled_before_measurement);
+        stats.secondary_work_tuning = suite.workTuningSummary(system.narrowphase_tuner.report(), narrowphase_settled_before_measurement);
     }
     return stats;
 }

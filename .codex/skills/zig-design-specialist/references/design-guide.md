@@ -31,6 +31,9 @@ repo. Keep the final design compact, but make the decisions below explicit.
 - Save/load designs should stream persistent gameplay data and stable asset
   references, not app services, renderer resources, thread objects, or frame
   commands.
+- Runtime gameplay and render-prep data should carry stable asset IDs such as
+  `SpriteAssetId` and `AudioAssetId`; path validation, PNG decode, GPU upload,
+  audio load/predecode, and string lookup belong in asset/app services.
 
 ## Processor Contracts
 
@@ -83,6 +86,10 @@ repo. Keep the final design compact, but make the decisions below explicit.
 - AI, pathfinding, and rule systems should usually emit movement intents,
   steering outputs, target choices, or deferred commands rather than mutating
   unrelated stores directly.
+- The current demo AI gathers pairwise local separation on the main thread and
+  threads intent emission only. Treat scalable perception, pathfinding, and
+  rule processing as future staged designs with their own tuners and merge
+  points.
 - Deterministic randomness, if needed, should be explicit state or an explicit
   service passed through the processor boundary. Do not hide random choices in
   hot processors.

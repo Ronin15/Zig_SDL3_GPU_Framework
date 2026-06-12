@@ -5,10 +5,9 @@
 Create a state struct with the methods used by `src/app/state.zig`:
 
 ```zig
-const state_mod = @import("../app/state.zig");
-const RenderContext = state_mod.RenderContext;
-const StateTransitions = state_mod.StateTransitions;
-const UpdateContext = state_mod.UpdateContext;
+const RenderContext = @import("../app/state.zig").RenderContext;
+const StateTransitions = @import("../app/state.zig").StateTransitions;
+const UpdateContext = @import("../app/state.zig").UpdateContext;
 const c = @import("../platform/sdl.zig").c;
 
 pub const MyState = struct {
@@ -42,7 +41,7 @@ pub const MyState = struct {
     pub fn render(self: *MyState, context: RenderContext) !void {
         _ = self;
         _ = context.renderer;
-        _ = context.asset_cache;
+        _ = context.runtime_assets;
         _ = context.text_service;
         _ = context.interpolation_alpha;
         _ = context.thread_system;

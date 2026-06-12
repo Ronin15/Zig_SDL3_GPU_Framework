@@ -23,7 +23,8 @@ game-specific behavior under `src/game/`.
 - `src/app/resolution.zig` owns pure logical-resolution, viewport, and coordinate conversion policy.
 - `src/assets/assets.zig` resolves safe runtime asset paths,
   `src/assets/image.zig` decodes PNGs into transient CPU image data,
-  `src/assets/cache.zig` caches renderer-backed runtime assets, and
+  `src/assets/cache.zig` caches renderer-backed runtime assets,
+  `src/assets/manifest.zig` defines stable startup sprite/audio IDs, and
   `src/assets/runtime_assets.zig` owns the startup runtime asset catalog.
 - `src/render/renderer.zig` is the game-facing render facade and frame coordinator.
 - `src/render/camera.zig` owns simple world-to-screen camera transforms.
@@ -32,13 +33,19 @@ game-specific behavior under `src/game/`.
 - `src/render/gpu/` owns SDL_GPU device/window setup helpers, upload buffers, texture uploads, and sprite material/pipeline creation.
 - `src/render/text.zig` owns SDL3_ttf lifecycle, asset-backed fonts, and cached text textures.
 - `src/render/debug_overlay.zig`, `src/render/debug_overlay_stub.zig`, and `src/render/fps_counter.zig` draw or compile out the F2 FPS overlay.
-- `src/game/game_demo_state.zig`, `src/game/pause_state.zig`, `src/game/main_menu_state.zig`, and `src/game/settings_menu_state.zig` are the game/application states. Main menu is the default startup state (Slice 16); gameplay is launched from it via transitions.
+- `src/game/game_demo_state.zig`, `src/game/pause_state.zig`, `src/game/main_menu_state.zig`, `src/game/settings_menu_state.zig`, and `src/game/menu_view.zig` are the game/application state and menu modules. Main menu is the default startup state (Slice 16); gameplay is launched from it via transitions.
 - `src/game/data_system.zig` owns state-local persistent entity data in dense
   SoA stores for gameplay, collision, and render systems.
+- `src/game/simulation.zig` owns transient fixed-step streams, deterministic
+  range-output collection, and deferred structural command buffers.
 - `src/game/player.zig` keeps player-specific input and facing behavior while
   storing persistent player data in `DataSystem`.
 - `src/game/systems/movement.zig` integrates movement-body SoA columns through
   serial or threaded SIMD-aware ranges.
+- `src/game/systems/ai.zig` emits movement intents for ai_agent rows.
+- `src/game/systems/collision.zig` generates deterministic contact streams.
+- `src/game/systems/collision_response.zig` consumes contacts and applies
+  response-policy movement corrections.
 - `src/game/systems/particle.zig` owns state-local transient particle effects
   in a fixed-capacity SoA pool with serial or threaded SIMD-aware updates.
 - `src/gpu_smoke.zig` is the GPU smoke executable entry point, while
@@ -105,9 +112,9 @@ this catalog and fall back to primitive rectangles when a declared sprite is
 unavailable. Engine-owned services must not persist pointers to sibling service
 fields; release paths take the live owner explicitly. Cache lease tokens include
 cache-owner identity, slot generation, and texture identity so release paths can
-reject stale, forged, or wrong-owner tokens. Startup asset preload rolls back
-partial sprite work on failure instead of leaving retained renderer resources
-behind.
+reject stale, forged, or wrong-owner tokens. Missing declared startup content is
+logged and exposed as unavailable; fatal preload errors roll back partial sprite
+work instead of leaving retained renderer resources behind.
 
 Generated text follows the render-service ownership rule. `TextService` owns
 SDL_ttf, loaded fonts, and generated renderer text textures for the app
@@ -261,17 +268,18 @@ applies sparse movement writes deterministically on the main thread before
 structural commands commit.
 
 `AiSystem` (first AI processor) is a decision emitter over ai_agent entities.
-It receives const AiAgent + movement prior-position slices (read-only), uses a
-per-system AdaptiveWorkTuner to select the range/worker profile for
-parallelForWithOptions (range-aligned), and appends MovementIntent ranges via
-`SimulationFrame.intents` (count/prefix/write). Wander amplitude and seek
-(player-targeted via AiConfig.seek_target from previous_position +
-main-thread precomputed sep + `DataSystem` dense movement lookup)
-prove non-player entities are driven by persistent data + processor intents, not
-hardcoded velocities. Consumption (main-thread, before MovementSystem) writes
-velocities from intent dir * speed using MovementBodyPtr; player remains
-special-cased with no ai_agent component. Intent streams and processor order are
-explicit in the owning `GameDemoState`.
+It receives const AiAgent + movement prior-position slices, gathers the current
+pairwise local-separation context on the main thread, then uses a per-system
+AdaptiveWorkTuner to select the range/worker profile for threaded intent
+emission through `SimulationFrame.intents` (count/prefix/write). This current
+O(N^2) separation gather is deliberate and bounded for the demo and benchmark
+profiles; future scalable perception, pathfinding, or rule systems need their
+own staged/tuned design. Wander amplitude and seek prove non-player entities
+are driven by persistent data + processor intents, not hardcoded velocities.
+Consumption (main-thread, before MovementSystem) writes velocities from intent
+dir * speed using MovementBodyPtr; player remains special-cased with no
+ai_agent component. Intent streams and processor order are explicit in the
+owning `GameDemoState`.
 
 The demo player is intentionally a special-case facade for player input and
 facing rules, backed by `DataSystem` data. Enemies and other world objects

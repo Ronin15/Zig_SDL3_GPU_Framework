@@ -215,16 +215,17 @@ Current foundation:
 - `AssetCache` maps validated relative PNG paths to retained renderer
   `TextureId` values by decoding through assets and asking render to upload
   already-decoded pixels.
-- `Engine` owns the cache and exposes it to states through `RenderContext`.
+- `Engine` owns the cache. Slice 17 later moved gameplay-facing render lookup
+  to stable `RuntimeAssets` IDs exposed through `RenderContext`.
 - `assets/test/cache_probe.png` provides a tiny installed PNG fixture for cache
   and asset-root checks.
 
 Future render-data slice:
 
-- Entity creation and world loading should bind texture handles or atlas-region
-  handles before render-time. `DataSystem` render data should store prepared
-  render references such as `TextureId` plus source rectangle, tint, layer, and
-  coordinate-space intent.
+- Entity creation and world loading should bind stable sprite or atlas-region
+  IDs before render-time. `DataSystem` render data should store stable asset
+  references plus source intent such as tint, layer, and coordinate-space
+  intent, not live renderer handles.
 - A state-owned render-prep system should read immutable `DataSystem` slices and
   submit prepared `Sprite` commands to `Renderer`. The renderer should not look
   up gameplay entities, world data, asset paths, or texture assignments.
@@ -863,9 +864,10 @@ Current foundation:
   collision-aware decisions.
 - `DataSystem` owns aligned `AiAgent` SoA data, membership masks,
   structural-command validation, and dense movement lookup for AI rows.
-- `AiSystem` reads `AiAgent` and movement slices, emits deterministic
-  `MovementIntent` ranges into `SimulationFrame`, and uses serial or adaptive
-  threaded execution.
+- `AiSystem` reads `AiAgent` and movement slices, gathers pairwise local
+  separation on the main thread, emits deterministic `MovementIntent` ranges
+  into `SimulationFrame`, and uses serial or adaptive threaded execution for the
+  intent-emission stage.
 - `GameDemoState` runs AI after main-thread player input and before movement
   integration, then applies AI movement intents on the main thread before
   `MovementSystem`.
@@ -883,6 +885,9 @@ Architecture notes:
 - Future AI, pathfinding, and rules should emit movement intents, steering
   outputs, target choices, path requests/results, or deferred commands rather
   than mutating unrelated stores directly.
+- The current AI separation gather is an O(N^2) demo-scale setup step. Future
+  scalable perception, pathfinding, or rule passes need explicit staged work
+  ownership, stage-specific tuning, and deterministic merge points.
 - Deterministic randomness must be explicit state or an explicit service passed
   through the processor boundary.
 - Pathfinding should use read-only navigation or world snapshots during worker
@@ -1099,7 +1104,7 @@ Acceptance checks:
       entity component storage.
 - [x] `zig build fmt`, `zig build test`, `zig build check`, and
       `zig build verify` pass.
-- [ ] Manual `zig build dev` smoke confirms menu, gameplay, sprite rendering,
+- [x] Manual `zig build dev` smoke confirms menu, gameplay, sprite rendering,
       audio, pause, debug overlay, and repeated transitions still work.
 
 Slice 17 lands the startup runtime asset catalog. `Engine` now preloads the
@@ -1107,9 +1112,9 @@ manifest-declared demo sprite and audio set, gameplay stores stable sprite IDs,
 rendering resolves IDs through `RuntimeAssets` with primitive fallback, and
 audio commands drain by preloaded `AudioAssetId` instead of copied paths. The
 catalog release path uses the live cache/renderer owner rather than
-self-releasing lease pointers. The manual interactive smoke remains the final
-human check because the automated pass only starts `zig build dev` long enough
-to confirm menu startup and startup asset preload.
+self-releasing lease pointers. Manual `zig build dev` validation confirmed menu,
+gameplay, sprite rendering, audio, pause, debug overlay, and repeated
+transitions.
 
 ## Suggested Order
 

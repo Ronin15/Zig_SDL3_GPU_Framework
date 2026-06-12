@@ -41,10 +41,10 @@ caches over adding per-frame workarounds.
 ## Command Selection
 
 - Use `zig build test` for Zig unit failures and pure behavior regressions.
-- Use `zig build check` for compile/link coverage without running the app.
+- Use `zig build check` for compile/link coverage of the game, benchmark, and GPU smoke executables without running the app.
 - Use `zig build shaders` for shader source, shader tool, or install-path failures.
 - Use `zig build dev` or `zig build run` only when runtime behavior needs the app.
-- Use `zig build gpu-smoke` for SDL_GPU device/swapchain frame submission checks when a display is available.
+- Use `zig build gpu-smoke` for display-gated renderer pipeline checks when a display is available: renderer init, installed shader/assets, primitive draw, swapchain acquisition, and frame submission.
 - Use `zig build verify` after a fix that affects multiple layers.
 
 Report display, GPU, or sandbox limitations separately from code failures.
@@ -52,7 +52,7 @@ Report display, GPU, or sandbox limitations separately from code failures.
 ## Common Failure Boundaries
 
 - Zig compiler errors usually point to type, import, build option, or API drift.
-- Link errors usually point to SDL3/SDL3_ttf discovery, system packages, or build wiring.
+- Link errors usually point to SDL3, SDL3_ttf, SDL3_mixer discovery, system packages, or build wiring.
 - Shader failures usually point to `glslc`, `spirv-cross`, shader source, platform format, or installed asset paths.
 - Runtime asset failures usually point to asset-root configuration, install steps, traversal checks, or executable-relative lookup.
 - SDL_GPU smoke failures may be code bugs, missing display backend, missing Vulkan/Metal support, or driver setup.

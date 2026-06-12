@@ -1,6 +1,6 @@
-# 2D SDL_GPU Game Framework in Zig
+# ZeroLight Framework
 
-![Zig SDL3 GPU Framework repo showcase](docs/images/repo-showcase.png)
+![ZeroLight Framework repo showcase](docs/images/repo-showcase.png)
 
 This is a lean 2D game framework built with Zig 0.16.0, SDL3, and SDL_GPU. It
 is organized around predictable frame flow, SDL_GPU rendering, explicit
@@ -47,8 +47,8 @@ See [setup](docs/setup.md) for platform package notes.
 ## Quick Start
 
 ```sh
-git clone git@github.com:Ronin15/Zig_SDL3_GPU_Framework.git
-cd Zig_SDL3_GPU_Framework
+git clone git@github.com:Ronin15/ZeroLight-Framework.git
+cd ZeroLight-Framework
 zig build
 zig build run
 ```
@@ -65,7 +65,7 @@ runs the app.
 ## Commands
 
 ```sh
-zig build           # build and install a runnable app into zig-out/bin
+zig build           # build and install the app, runtime assets, and shaders
 zig build run       # build, install assets/shaders, and run the app
 zig build dev       # build shaders, install assets, and run the app
 zig build check     # compile the game, benchmark, and GPU smoke executables
@@ -73,7 +73,7 @@ zig build test      # run Zig unit tests
 zig build bench     # run non-interactive CPU processor benchmarks
 zig build verify    # run check, test, and shader compilation
 zig build package   # install selected-mode binaries and runtime assets
-zig build gpu-smoke # create an SDL_GPU device and submit one frame
+zig build gpu-smoke # run a display-gated renderer pipeline smoke
 ```
 
 See [development workflow](docs/development-workflow.md) for release modes,
@@ -88,7 +88,7 @@ build options, formatting, shader commands, and GPU smoke details.
 - `src/render/` contains SDL_GPU rendering, camera transforms, GPU resources, text, and the debug overlay.
 - `src/game/` contains game states, gameplay data, and ECS-style processors.
 - `src/platform/` contains SDL/platform helpers and GPU smoke-test code.
-- `src/assets/` contains runtime path resolution, installed-file loading, and cache-backed texture ownership.
+- `src/assets/` contains runtime path resolution, installed-file loading, the typed asset manifest, runtime asset catalog, and cache-backed texture ownership.
 - `src/core/` contains small shared helpers.
 - `assets/` contains runtime assets, bundled fonts, and shader sources.
 

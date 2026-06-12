@@ -3,7 +3,7 @@
 ## Common Commands
 
 ```sh
-zig build           # build and install a runnable app into zig-out/bin
+zig build           # build and install the app, runtime assets, and shaders
 zig build run       # build, install assets/shaders, and run the app
 zig build dev       # build shaders, install assets, and run the app
 zig build check     # compile the game, GPU smoke, and benchmark executables
@@ -18,7 +18,7 @@ Useful supporting commands:
 ```sh
 zig build fmt       # format build.zig, build.zig.zon, and src/
 zig build shaders   # compile GLSL shader sources to platform GPU shaders
-zig build gpu-smoke # create an SDL_GPU device and submit one frame
+zig build gpu-smoke # run a display-gated renderer pipeline smoke
 ```
 
 `zig build package` installs the selected-mode game binary and runtime assets.
@@ -172,7 +172,8 @@ zig build bench -- --details
 
 ## GPU Smoke
 
-`zig build gpu-smoke` opens a small window long enough to create an SDL_GPU
-device, acquire a swapchain texture, and submit one frame. SDL still needs a
-usable video backend and display environment, so headless shells or CI runners
-may need display setup before this check can run.
+`zig build gpu-smoke` opens a small window long enough to install runtime
+assets/shaders, initialize the renderer path, load platform shader files, draw a
+primitive through the sprite pipeline, acquire a swapchain texture, and submit
+one frame. SDL still needs a usable video backend and display environment, so
+headless shells or CI runners may need display setup before this check can run.

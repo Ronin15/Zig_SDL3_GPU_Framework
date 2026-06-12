@@ -20,7 +20,8 @@ Use the existing docs as source of truth for deeper details:
 - `src/render/` owns SDL_GPU rendering, camera transforms, renderer resources, text, FPS/debug overlay, and frame submission.
 - `src/game/` owns game/application states, gameplay behavior, `DataSystem`, and ECS-style gameplay systems/processors.
 - `src/platform/` owns SDL C imports, small platform wrappers, and GPU smoke-test implementation.
-- `src/assets/` owns runtime asset path resolution and safe installed asset loading.
+- `src/assets/` owns runtime asset path resolution, safe installed asset
+  loading, the typed startup manifest, and the `RuntimeAssets` catalog.
 - `src/core/` owns small shared helpers such as math primitives.
 - `src/root.zig` is the minimal test/root file for math aliases and compile coverage.
 - `assets/` contains runtime assets, audio files, and shader sources. Runtime assets install under `zig-out/bin/assets` by default.
@@ -53,6 +54,10 @@ Add new code under the matching owner directory. Keep executable-only code near
   deferred/main-thread boundary is designed.
 - Keep debug UI state in the debug overlay path, not in gameplay state.
 - Keep runtime asset paths relative and traversal-safe.
+- Keep persistent gameplay/render data on stable asset IDs such as
+  `SpriteAssetId` and `AudioAssetId`; do not store string paths, `TextureId`,
+  `TextureLease`, prepared sprite records, SDL_mixer handles, or loaded audio
+  handles in `DataSystem`.
 - Use core SDL3 PNG loading for textures. Do not add `SDL3_image` unless that dependency is explicitly chosen.
 - SDL3, SDL3_ttf, and SDL3_mixer are system dependencies; avoid vendoring or half-adopting external dependencies.
 - Pair SDL resource creation with cleanup close to the creation site.
@@ -78,7 +83,8 @@ Add new code under the matching owner directory. Keep executable-only code near
 
 ## Build, Test, And Development Commands
 
-- `zig build` builds and installs the game executable to `zig-out/bin/my-sdl3-game`.
+- `zig build` builds and installs the game executable, runtime assets, and
+  platform shader files under `zig-out/bin`.
 - `zig build run` builds, installs runtime assets/shaders, and runs the app.
 - `zig build dev` builds shaders, installs assets, and runs the app for normal development.
 - `zig build test` runs reusable module tests plus SDL-linked compile coverage.
@@ -86,7 +92,9 @@ Add new code under the matching owner directory. Keep executable-only code near
 - `zig build bench` runs non-interactive CPU gameplay processor benchmarks.
 - `zig build verify` runs check, tests, and shader compilation.
 - `zig build shaders` compiles platform GPU shaders.
-- `zig build gpu-smoke` runs a display-gated SDL_GPU frame submission check.
+- `zig build gpu-smoke` runs a display-gated renderer pipeline smoke that
+  installs assets/shaders, creates SDL_GPU resources, draws, and submits one
+  frame.
 - `zig build fmt` formats `build.zig`, `build.zig.zon`, and `src/`.
 - `zig build package` installs selected-mode game binaries and runtime assets.
 

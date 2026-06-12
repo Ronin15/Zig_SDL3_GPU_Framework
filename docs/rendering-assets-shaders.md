@@ -130,12 +130,12 @@ renderer teardown. Gameplay and render prep should store or pass
 records. Cache lookup and retain/release are setup-time operations; per-frame
 rendering should use the startup catalog and retained IDs directly.
 
-`RuntimeAssets` owns startup sprite leases and treats preload as an
-all-or-rollback operation. If a later declared asset fails after an earlier
-sprite was acquired, the catalog releases the partial work before returning the
-error. Replacing a sprite slot or marking it unavailable releases the previous
-lease first. Backend-context test seams stay under asset tests; production code
-goes through the renderer-facing cache API.
+`RuntimeAssets` owns startup sprite leases. Missing declared content marks that
+asset unavailable and keeps startup moving; fatal preload errors release partial
+retained sprite work before returning the error. Replacing a sprite slot or
+marking it unavailable releases the previous lease first. Backend-context test
+seams stay under asset tests; production code goes through the renderer-facing
+cache API.
 
 ## Text Rendering
 

@@ -103,7 +103,11 @@ live cache/renderer owner, and exposes `SpriteAssetId` lookup as atlas-ready
 `{ texture, source_rect }` records. Hot render paths resolve stable IDs through
 this catalog and fall back to primitive rectangles when a declared sprite is
 unavailable. Engine-owned services must not persist pointers to sibling service
-fields; release paths take the live owner explicitly.
+fields; release paths take the live owner explicitly. Cache lease tokens include
+cache-owner identity, slot generation, and texture identity so release paths can
+reject stale, forged, or wrong-owner tokens. Startup asset preload rolls back
+partial sprite work on failure instead of leaving retained renderer resources
+behind.
 
 Generated text follows the render-service ownership rule. `TextService` owns
 SDL_ttf, loaded fonts, and generated renderer text textures for the app

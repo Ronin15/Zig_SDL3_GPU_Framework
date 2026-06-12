@@ -122,12 +122,20 @@ values. Loading the same path decodes PNG data through `AssetStore`, uploads
 decoded RGBA8 pixels through the renderer, reuses the existing texture on later
 acquires, and increments a retain count. `TextureLease` is a non-owning retained
 texture token; it does not store an `AssetCache` pointer or renderer/backend
-context. Owners that hold leases release them through
-`AssetCache.releaseTexture(renderer, &lease)` before renderer teardown. Gameplay
-and render prep should store or pass `SpriteAssetId`, not paths, `TextureId`,
-`TextureLease`, or prepared sprite records. Cache lookup and retain/release are
-setup-time operations; per-frame rendering should use the startup catalog and
-retained IDs directly.
+context. It still carries enough identity for the cache to reject stale,
+forged, or wrong-owner releases before retiring a slot. Owners that hold leases
+release them through `AssetCache.releaseTexture(renderer, &lease)` before
+renderer teardown. Gameplay and render prep should store or pass
+`SpriteAssetId`, not paths, `TextureId`, `TextureLease`, or prepared sprite
+records. Cache lookup and retain/release are setup-time operations; per-frame
+rendering should use the startup catalog and retained IDs directly.
+
+`RuntimeAssets` owns startup sprite leases and treats preload as an
+all-or-rollback operation. If a later declared asset fails after an earlier
+sprite was acquired, the catalog releases the partial work before returning the
+error. Replacing a sprite slot or marking it unavailable releases the previous
+lease first. Backend-context test seams stay under asset tests; production code
+goes through the renderer-facing cache API.
 
 ## Text Rendering
 

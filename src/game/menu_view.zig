@@ -4,13 +4,14 @@
 
 //! Small shared helpers for simple vertical text-based menus used by game states.
 //! Deliberately lean: no allocation after setup, no widget tree, just common
-//! lease-aware render loop and selection math to reduce duplication between
-//! specific menu states (e.g. main menu and settings).
+//! draw loop and selection math to reduce duplication between specific menu
+//! states (e.g. main menu and settings).
 
 const std = @import("std");
 const config = @import("../config.zig");
 const Renderer = @import("../render/renderer.zig").Renderer;
-const TextTextureLease = @import("../render/text.zig").TextTextureLease;
+const text_file = @import("../render/text.zig");
+const PreparedText = text_file.PreparedText;
 
 pub fn changeSelection(selected: *usize, delta: i32, item_count: usize) void {
     const n: i32 = @intCast(item_count);
@@ -21,14 +22,12 @@ pub fn changeSelection(selected: *usize, delta: i32, item_count: usize) void {
 }
 
 /// Renders a simple centered menu panel with title and selectable items.
-/// The caller is responsible for acquiring the title and item TextTextureLeases
-/// (with appropriate colors for the selected item) before calling.
 pub fn renderList(
     renderer: *Renderer,
     width: f32,
     height: f32,
-    title: TextTextureLease,
-    item_leases: []const TextTextureLease,
+    title: PreparedText,
+    items: []const PreparedText,
     selected: usize,
     title_y: f32,
     first_item_y: f32,
@@ -54,19 +53,15 @@ pub fn renderList(
         .h = panel_height,
     }, panel_color, panel_layer);
 
-    if (title.isAlive()) {
-        const tw: f32 = @floatFromInt(title.width);
-        const th: f32 = @floatFromInt(title.height);
-        try renderer.drawSprite(.{
-            .texture = title.texture,
-            .dest = .{ .x = (width - tw) * 0.5, .y = title_y, .w = tw, .h = th },
-            .layer = text_layer,
-            .coordinate_space = .logical,
-        });
-    }
+    try text_file.drawPrepared(renderer, title, .{
+        .x = width * 0.5,
+        .y = title_y,
+        .anchor = .top_center,
+        .layer = text_layer,
+    });
 
     var y = first_item_y;
-    for (item_leases, 0..) |lease, i| {
+    for (items, 0..) |item, i| {
         const is_sel = (i == selected);
         if (is_sel) {
             const hx = (width - panel_width) * 0.5 + 10;
@@ -79,16 +74,12 @@ pub fn renderList(
             }, highlight_color, highlight_layer);
         }
 
-        if (lease.isAlive()) {
-            const iw: f32 = @floatFromInt(lease.width);
-            const ih: f32 = @floatFromInt(lease.height);
-            try renderer.drawSprite(.{
-                .texture = lease.texture,
-                .dest = .{ .x = (width - iw) * 0.5, .y = y, .w = iw, .h = ih },
-                .layer = text_layer,
-                .coordinate_space = .logical,
-            });
-        }
+        try text_file.drawPrepared(renderer, item, .{
+            .x = width * 0.5,
+            .y = y,
+            .anchor = .top_center,
+            .layer = text_layer,
+        });
 
         y += item_spacing;
     }

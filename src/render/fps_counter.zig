@@ -7,8 +7,8 @@ const config = @import("../config.zig");
 const Renderer = @import("renderer.zig").Renderer;
 const textServiceFile = @import("text.zig");
 const FontId = @import("text.zig").FontId;
+const PreparedText = @import("text.zig").PreparedText;
 const TextService = @import("text.zig").TextService;
-const TextTextureLease = @import("text.zig").TextTextureLease;
 
 const yellow = config.Color{ .r = 1.0, .g = 0.902, .b = 0.157, .a = 1.0 };
 const sample_window_ns = std.time.ns_per_s / 4;
@@ -18,7 +18,7 @@ const overlay_layer: i32 = 10_000;
 
 pub const FpsCounter = struct {
     font: FontId = FontId.invalid,
-    texture: TextTextureLease = .{},
+    text: PreparedText = .invalid,
     accumulated_ns: u64 = 0,
     sampled_frames: u32 = 0,
     displayed_fps: u32 = 0,
@@ -33,7 +33,7 @@ pub const FpsCounter = struct {
     }
 
     pub fn deinit(self: *FpsCounter) void {
-        self.texture.release();
+        _ = self;
     }
 
     pub fn prepareForRender(
@@ -50,9 +50,8 @@ pub const FpsCounter = struct {
             self.texture_dirty = true;
         }
 
-        if (!self.texture.isAlive() or self.texture_dirty) {
-            try self.rebuildTexture(text_service, renderer);
-            self.texture_dirty = false;
+        if (self.texture_dirty or !self.text.isValid()) {
+            try self.prepareTextView(text_service, renderer);
         }
     }
 
@@ -80,33 +79,25 @@ pub const FpsCounter = struct {
     }
 
     pub fn render(self: *const FpsCounter, renderer: *Renderer) !void {
-        if (!self.texture.isAlive()) return;
-        try renderer.drawSprite(.{
-            .texture = self.texture.texture,
-            .dest = .{
-                .x = 12,
-                .y = 10,
-                .w = @floatFromInt(self.texture.width),
-                .h = @floatFromInt(self.texture.height),
-            },
+        try textServiceFile.drawPrepared(renderer, self.text, .{
+            .x = 12,
+            .y = 10,
             .layer = overlay_layer,
             .coordinate_space = .drawable,
         });
     }
 
-    fn rebuildTexture(self: *FpsCounter, text_service: *TextService, renderer: *Renderer) !void {
+    fn prepareTextView(self: *FpsCounter, text_service: *TextService, renderer: *Renderer) !void {
         var text_buffer: [32]u8 = undefined;
         const text = try std.fmt.bufPrint(&text_buffer, "FPS {d}", .{self.displayed_fps});
-
-        const next_texture = try text_service.acquireText(renderer, .{
+        self.text = try text_service.prepareText(renderer, .{
             .text = text,
             .style = .{
                 .font = self.font,
                 .color = yellow,
             },
         });
-        self.texture.release();
-        self.texture = next_texture;
+        self.texture_dirty = false;
     }
 };
 

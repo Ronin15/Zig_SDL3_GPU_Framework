@@ -209,12 +209,11 @@ pub const AudioService = struct {
             .config = config,
             .enabled = config.enabled,
             .backend = disabledBackend(),
-            .backend_context = undefined,
+            .backend_context = disabledBackendContext(),
             .master_gain = config.master_gain,
             .sfx_gain = config.sfx_gain,
             .music_gain = config.music_gain,
         };
-        service.backend_context = @ptrCast(&service);
         if (!config.enabled) return service;
 
         const production_context = try allocator.create(ProductionBackendContext);
@@ -678,6 +677,13 @@ pub const Backend = struct {
     set_track_position: *const fn (*anyopaque, BackendHandle, ?BackendPosition) anyerror!void,
 };
 
+const DisabledBackendContext = struct {};
+var disabled_backend_context = DisabledBackendContext{};
+
+fn disabledBackendContext() *anyopaque {
+    return @ptrCast(&disabled_backend_context);
+}
+
 const ProductionBackendContext = struct {
     mixer: *c.MIX_Mixer,
 
@@ -1057,6 +1063,26 @@ test "audio command buffer enforces per-step command cap" {
     try std.testing.expectEqual(@as(usize, 1), commands.len());
     commands.beginStep();
     try std.testing.expectEqual(@as(usize, 0), commands.len());
+}
+
+test "disabled audio backend context is stable after service move" {
+    const assetStore = assets.AssetStore.init(std.testing.allocator, std.testing.io, "assets");
+    var service = try AudioService.init(std.testing.allocator, assetStore, .{ .enabled = false });
+    const context_address = @intFromPtr(service.backend_context);
+    try std.testing.expectEqual(@intFromPtr(disabledBackendContext()), context_address);
+    try std.testing.expect(context_address != @intFromPtr(&service));
+
+    var moved = service;
+    service = undefined;
+    defer moved.deinit();
+
+    try std.testing.expectEqual(context_address, @intFromPtr(moved.backend_context));
+    try std.testing.expect(context_address != @intFromPtr(&moved));
+
+    var commands = AudioCommandBuffer.init(std.testing.allocator, 2);
+    defer commands.deinit();
+    try commands.playSfx(.{ .asset = .collision_sfx });
+    moved.drain(&commands);
 }
 
 test "audio service init cleans up music track when first sfx track creation fails" {

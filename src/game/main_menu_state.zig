@@ -5,8 +5,6 @@
 const std = @import("std");
 const config = @import("../config.zig");
 const Renderer = @import("../render/renderer.zig").Renderer;
-const TextTextureLease = @import("../render/text.zig").TextTextureLease;
-const TextService = @import("../render/text.zig").TextService;
 const RenderContext = @import("../app/state.zig").RenderContext;
 const State = @import("../app/state.zig").State;
 const StateTransitions = @import("../app/state.zig").StateTransitions;
@@ -16,6 +14,10 @@ const GameDemoState = @import("game_demo_state.zig").GameDemoState;
 const SettingsMenuState = @import("settings_menu_state.zig").SettingsMenuState;
 const RuntimeAudioSettings = @import("settings_menu_state.zig").RuntimeAudioSettings;
 const menu_view = @import("menu_view.zig");
+const text_file = @import("../render/text.zig");
+const FontId = text_file.FontId;
+const PreparedText = text_file.PreparedText;
+const TextService = text_file.TextService;
 const log = @import("../core/logging.zig").game;
 const c = @import("../platform/sdl.zig").c;
 
@@ -25,9 +27,9 @@ pub const MainMenuState = struct {
     height: f32,
     audio_settings: RuntimeAudioSettings,
     selected: usize = 0,
-    title: TextTextureLease = .{},
-    item_leases: [item_count]TextTextureLease = [_]TextTextureLease{.{}} ** item_count,
-    needs_rebuild: bool = true,
+    title_text: PreparedText = .invalid,
+    item_texts: [item_count]PreparedText = [_]PreparedText{PreparedText.invalid} ** item_count,
+    text_dirty: bool = true,
 
     const item_count = 3;
     const items = [_][]const u8{
@@ -52,9 +54,6 @@ pub const MainMenuState = struct {
     const title_y: f32 = 200;
     const first_item_y: f32 = 270;
     const item_spacing: f32 = 42;
-    const highlight_pad_x: f32 = 10;
-    const highlight_height: f32 = 30;
-
     pub fn init(allocator: std.mem.Allocator, width: f32, height: f32, audio_config: config.AudioConfig) MainMenuState {
         log.debug("main menu initialized ({}x{})", .{ width, height });
         return .{
@@ -66,8 +65,8 @@ pub const MainMenuState = struct {
     }
 
     pub fn deinit(self: *MainMenuState) void {
+        _ = self;
         log.debug("main menu deinit", .{});
-        self.releaseLeases();
     }
 
     pub fn handleEvent(self: *MainMenuState, event: *const c.SDL_Event, transitions: *StateTransitions) !bool {
@@ -107,16 +106,16 @@ pub const MainMenuState = struct {
         const renderer = context.renderer;
         const text_service = context.text_service orelse return;
 
-        if (self.needs_rebuild or !self.title.isAlive()) {
-            try self.rebuildText(text_service, renderer);
+        if (self.text_dirty or !self.title_text.isValid()) {
+            try self.prepareTextViews(text_service, renderer);
         }
 
         try menu_view.renderList(
             renderer,
             self.width,
             self.height,
-            self.title,
-            &self.item_leases,
+            self.title_text,
+            &self.item_texts,
             self.selected,
             title_y,
             first_item_y,
@@ -139,7 +138,7 @@ pub const MainMenuState = struct {
 
     fn changeSelection(self: *MainMenuState, delta: i32) void {
         menu_view.changeSelection(&self.selected, delta, item_count);
-        self.needs_rebuild = true;
+        self.text_dirty = true;
     }
 
     fn activate(self: *MainMenuState, transitions: *StateTransitions) !void {
@@ -170,37 +169,39 @@ pub const MainMenuState = struct {
         }
     }
 
-    fn rebuildText(self: *MainMenuState, text_service: *TextService, renderer: *Renderer) !void {
-        self.releaseLeases();
-        errdefer self.releaseLeases();
+    fn prepareTextViews(self: *MainMenuState, text_service: *TextService, renderer: *Renderer) !void {
+        const font = text_service.defaultFont();
 
-        self.title = try text_service.acquireText(renderer, .{
-            .text = "Zig SDL3 GPU",
-            .style = .{
-                .font = text_service.defaultFont(),
-                .color = title_color,
-            },
-        });
-
-        for (items, 0..) |lab, i| {
-            const col = if (i == self.selected) accent_color else normal_color;
-            self.item_leases[i] = try text_service.acquireText(renderer, .{
-                .text = lab,
-                .style = .{
-                    .font = text_service.defaultFont(),
-                    .color = col,
-                },
-            });
+        self.title_text = try prepareLabel(text_service, renderer, font, "Zig SDL3 GPU", title_color);
+        for (items, 0..) |label, i| {
+            self.item_texts[i] = try prepareLabel(
+                text_service,
+                renderer,
+                font,
+                label,
+                if (i == self.selected) accent_color else normal_color,
+            );
         }
 
-        self.needs_rebuild = false;
-    }
-
-    fn releaseLeases(self: *MainMenuState) void {
-        self.title.release();
-        for (&self.item_leases) |*l| l.release();
+        self.text_dirty = false;
     }
 };
+
+fn prepareLabel(
+    text_service: *TextService,
+    renderer: *Renderer,
+    font: FontId,
+    label: []const u8,
+    color: config.Color,
+) !PreparedText {
+    return text_service.prepareText(renderer, .{
+        .text = label,
+        .style = .{
+            .font = font,
+            .color = color,
+        },
+    });
+}
 
 test "main menu selection wraps and activates produce transitions" {
     var menu = MainMenuState.init(std.testing.allocator, 800, 450, .{});

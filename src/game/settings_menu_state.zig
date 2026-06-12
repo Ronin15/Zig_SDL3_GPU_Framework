@@ -5,14 +5,16 @@
 const std = @import("std");
 const config = @import("../config.zig");
 const Renderer = @import("../render/renderer.zig").Renderer;
-const TextTextureLease = @import("../render/text.zig").TextTextureLease;
-const TextService = @import("../render/text.zig").TextService;
 const AudioCommandBuffer = @import("../app/audio.zig").AudioCommandBuffer;
 const RenderContext = @import("../app/state.zig").RenderContext;
 const StateTransitions = @import("../app/state.zig").StateTransitions;
 const UpdateContext = @import("../app/state.zig").UpdateContext;
 const inputFile = @import("../app/input.zig");
 const menu_view = @import("menu_view.zig");
+const text_file = @import("../render/text.zig");
+const FontId = text_file.FontId;
+const PreparedText = text_file.PreparedText;
+const TextService = text_file.TextService;
 const log = @import("../core/logging.zig").game;
 const c = @import("../platform/sdl.zig").c;
 
@@ -44,10 +46,10 @@ pub const SettingsMenuState = struct {
     width: f32,
     height: f32,
     selected: usize = 0,
-    title: TextTextureLease = .{},
-    item_leases: [item_count]TextTextureLease = [_]TextTextureLease{.{}} ** item_count,
-    needs_rebuild: bool = true,
     pending_adjust: i32 = 0,
+    title_text: PreparedText = .invalid,
+    item_texts: [item_count]PreparedText = [_]PreparedText{PreparedText.invalid} ** item_count,
+    text_dirty: bool = true,
 
     const item_count = 4;
     const items = [_][]const u8{
@@ -73,9 +75,6 @@ pub const SettingsMenuState = struct {
     const title_y: f32 = 180;
     const first_item_y: f32 = 240;
     const item_spacing: f32 = 38;
-    const highlight_pad_x: f32 = 12;
-    const highlight_height: f32 = 28;
-
     pub fn init(settings: *RuntimeAudioSettings, width: f32, height: f32) SettingsMenuState {
         log.debug("settings menu initialized ({}x{})", .{ width, height });
         return .{
@@ -86,8 +85,8 @@ pub const SettingsMenuState = struct {
     }
 
     pub fn deinit(self: *SettingsMenuState) void {
+        _ = self;
         log.debug("settings menu deinit", .{});
-        self.releaseLeases();
     }
 
     pub fn handleEvent(self: *SettingsMenuState, event: *const c.SDL_Event, transitions: *StateTransitions) !bool {
@@ -138,16 +137,16 @@ pub const SettingsMenuState = struct {
         const renderer = context.renderer;
         const text_service = context.text_service orelse return;
 
-        if (self.needs_rebuild or !self.title.isAlive()) {
-            try self.rebuildText(text_service, renderer);
+        if (self.text_dirty or !self.title_text.isValid()) {
+            try self.prepareTextViews(text_service, renderer);
         }
 
         try menu_view.renderList(
             renderer,
             self.width,
             self.height,
-            self.title,
-            &self.item_leases,
+            self.title_text,
+            &self.item_texts,
             self.selected,
             title_y,
             first_item_y,
@@ -170,7 +169,7 @@ pub const SettingsMenuState = struct {
 
     fn changeSelection(self: *SettingsMenuState, delta: i32) void {
         menu_view.changeSelection(&self.selected, delta, item_count);
-        self.needs_rebuild = true;
+        self.text_dirty = true;
     }
 
     fn adjustSelected(self: *SettingsMenuState, delta: i32, audio: *AudioCommandBuffer) !void {
@@ -203,7 +202,7 @@ pub const SettingsMenuState = struct {
             },
             else => {},
         }
-        self.needs_rebuild = true;
+        self.text_dirty = true;
         log.debug("settings adjusted volume row {d} to {d}/10", .{ self.selected, newv });
     }
 
@@ -215,24 +214,13 @@ pub const SettingsMenuState = struct {
         // volumes: left/right already live-adjust; confirm on volume rows does nothing extra
     }
 
-    fn rebuildText(self: *SettingsMenuState, text_service: *TextService, renderer: *Renderer) !void {
-        self.releaseLeases();
-        errdefer self.releaseLeases();
+    fn prepareTextViews(self: *SettingsMenuState, text_service: *TextService, renderer: *Renderer) !void {
+        const font = text_service.defaultFont();
+        self.title_text = try prepareLabel(text_service, renderer, font, "Settings", title_color);
 
-        // Title (static)
-        self.title = try text_service.acquireText(renderer, .{
-            .text = "Settings",
-            .style = .{
-                .font = text_service.defaultFont(),
-                .color = title_color,
-            },
-        });
-
-        // Items (dynamic for volumes) - use stack buffers to avoid heap allocation on rebuild
         var master_buf: [64]u8 = undefined;
         var sfx_buf: [64]u8 = undefined;
         var music_buf: [64]u8 = undefined;
-
         const labels = [_][]const u8{
             std.fmt.bufPrint(&master_buf, "Master Volume: {d: >2}/10", .{self.settings.master}) catch "Master Volume: ??/10",
             std.fmt.bufPrint(&sfx_buf, "SFX Volume:    {d: >2}/10", .{self.settings.sfx}) catch "SFX Volume:    ??/10",
@@ -240,25 +228,35 @@ pub const SettingsMenuState = struct {
             "Back",
         };
 
-        for (labels, 0..) |lab, i| {
-            const col = if (i == self.selected) accent_color else normal_color;
-            self.item_leases[i] = try text_service.acquireText(renderer, .{
-                .text = lab,
-                .style = .{
-                    .font = text_service.defaultFont(),
-                    .color = col,
-                },
-            });
+        for (labels, 0..) |label, i| {
+            self.item_texts[i] = try prepareLabel(
+                text_service,
+                renderer,
+                font,
+                label,
+                if (i == self.selected) accent_color else normal_color,
+            );
         }
 
-        self.needs_rebuild = false;
-    }
-
-    fn releaseLeases(self: *SettingsMenuState) void {
-        self.title.release();
-        for (&self.item_leases) |*l| l.release();
+        self.text_dirty = false;
     }
 };
+
+fn prepareLabel(
+    text_service: *TextService,
+    renderer: *Renderer,
+    font: FontId,
+    label: []const u8,
+    color: config.Color,
+) !PreparedText {
+    return text_service.prepareText(renderer, .{
+        .text = label,
+        .style = .{
+            .font = font,
+            .color = color,
+        },
+    });
+}
 
 test "settings volumes clamp and emit gain commands" {
     var runtime_settings = RuntimeAudioSettings.init(.{});

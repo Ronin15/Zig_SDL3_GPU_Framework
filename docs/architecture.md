@@ -105,6 +105,14 @@ this catalog and fall back to primitive rectangles when a declared sprite is
 unavailable. Engine-owned services must not persist pointers to sibling service
 fields; release paths take the live owner explicitly.
 
+Generated text follows the render-service ownership rule. `TextService` owns
+SDL_ttf, loaded fonts, and generated renderer text textures for the app
+lifetime. UI states describe text intent during render and receive only
+non-owning prepared text views when the intent changes. Stable render frames
+draw those prepared views directly, without re-checking the text cache. State
+teardown stays service-free: do not pass renderer/text/audio services into
+generic state destruction to compensate for escaped resource ownership.
+
 Game states request SFX and music through `AudioCommandBuffer` in
 `UpdateContext` using stable `AudioAssetId` values. `AudioService` is app-owned
 because SDL_mixer device, mixer, track pool, loaded-audio cache, bus gains, and

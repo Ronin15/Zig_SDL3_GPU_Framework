@@ -18,16 +18,8 @@ pub const group = suite.BenchmarkGroup{
     .runCase = runCase,
 };
 
-const quick_counts = [_]usize{16_384};
-const standard_counts = [_]usize{65_536};
-const stress_counts = [_]usize{262_144};
-
 pub fn defaultItemCounts(profile: suite.Profile) []const usize {
-    return switch (profile) {
-        .quick => &quick_counts,
-        .standard => &standard_counts,
-        .stress => &stress_counts,
-    };
+    return suite.eventScaleCounts(profile);
 }
 
 pub fn createFixture(allocator: std.mem.Allocator, count: usize) !ParticleSystem {
@@ -163,4 +155,10 @@ test "particle benchmark fixture keeps long-lived particles active after update"
     try std.testing.expectEqual(@as(usize, 8), particles.activeCount());
     const slice = particles.sliceConst();
     try std.testing.expect(math.clamp(slice.color_a[0], 0, 1) > 0.99);
+}
+
+test "particle benchmark profiles sweep shared event scale counts" {
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.quick), defaultItemCounts(.quick));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.standard), defaultItemCounts(.standard));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.stress), defaultItemCounts(.stress));
 }

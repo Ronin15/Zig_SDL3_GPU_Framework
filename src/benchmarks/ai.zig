@@ -23,10 +23,6 @@ pub const group = suite.BenchmarkGroup{
     .runCase = runCase,
 };
 
-const quick_counts = [_]usize{ 128, 256, 512, 1_024 };
-const standard_counts = [_]usize{ 128, 256, 512, 1_024, 2_048, 4_096 };
-const stress_counts = [_]usize{ 512, 1_024, 2_048, 4_096, 8_192 };
-
 const Fixture = struct {
     data: DataSystem,
     frame: SimulationFrame,
@@ -39,11 +35,7 @@ const Fixture = struct {
 };
 
 pub fn defaultItemCounts(profile: suite.Profile) []const usize {
-    return switch (profile) {
-        .quick => &quick_counts,
-        .standard => &standard_counts,
-        .stress => &stress_counts,
-    };
+    return suite.eventScaleCounts(profile);
 }
 
 pub fn createFixture(allocator: std.mem.Allocator, count: usize) !Fixture {
@@ -196,7 +188,7 @@ test "ai benchmark fixed cases use explicit range controls" {
 }
 
 test "ai benchmark profiles keep bounded separation workload cases" {
-    try std.testing.expectEqual(@as(usize, 4), defaultItemCounts(.quick).len);
-    try std.testing.expectEqual(@as(usize, 128), defaultItemCounts(.quick)[0]);
-    try std.testing.expectEqual(@as(usize, 8_192), defaultItemCounts(.stress)[4]);
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.quick), defaultItemCounts(.quick));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.standard), defaultItemCounts(.standard));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.stress), defaultItemCounts(.stress));
 }

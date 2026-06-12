@@ -111,12 +111,12 @@ full processor flow can be checked for regressions.
 fixed range size, while `thread-adaptive-tuned-range` uses the same
 processor-owned adaptive worker and range tuner path as production systems. The
 fixed cases are controls for scheduler overhead, worker-count scaling, and
-range-size effects. The default quick profile keeps collision coverage short:
-dense and sparse collision each run one representative body count, while
-collision-response modes run small and medium contact counts. AI sweeps
-128-1,024 agents in the quick profile, 128-4,096 in standard, and 512-8,192 in
-stress. AI separation uses a transient spatial grid with bounded neighbor and
-candidate samples, then intent emission runs as its own stage.
+range-size effects. Gameplay processor benchmarks use a shared event-scale
+count ladder so each system shows a performance curve across small, medium, and
+high counts: quick runs 1,024, 4,096, and 10,000 items; standard adds 25,000 and
+50,000; stress keeps the high-count 10,000, 25,000, and 50,000 signal points.
+AI separation uses a transient spatial grid with bounded neighbor and candidate
+samples, then intent emission runs as its own stage.
 Collision output includes candidate-pair and contact counts so dense stress
 cases can be compared against sparse gameplay-shaped distributions. Detail rows
 also report narrowphase as `narrow=inline` or `narrow=worker_threads/items_per_range`

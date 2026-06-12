@@ -18,6 +18,18 @@ pub const Profile = enum {
     stress,
 };
 
+const event_scale_quick_counts = [_]usize{ 1_024, 4_096, 10_000 };
+const event_scale_standard_counts = [_]usize{ 1_024, 4_096, 10_000, 25_000, 50_000 };
+const event_scale_stress_counts = [_]usize{ 10_000, 25_000, 50_000 };
+
+pub fn eventScaleCounts(profile: Profile) []const usize {
+    return switch (profile) {
+        .quick => &event_scale_quick_counts,
+        .standard => &event_scale_standard_counts,
+        .stress => &event_scale_stress_counts,
+    };
+}
+
 pub const Options = struct {
     profile: Profile = .quick,
     warmup_iterations: usize = 5,
@@ -1069,6 +1081,12 @@ test "fixed adaptive benchmark case disables range probing" {
 test "adaptive settle budget covers multiple tuner windows" {
     try std.testing.expectEqual(@as(usize, 48), adaptiveSettleIterationLimit(.{}));
     try std.testing.expectEqual(@as(usize, 100), adaptiveSettleIterationLimit(.{ .iterations = 100 }));
+}
+
+test "event scale profiles cover low through high signal counts" {
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 1_024, 4_096, 10_000 }, eventScaleCounts(.quick));
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 1_024, 4_096, 10_000, 25_000, 50_000 }, eventScaleCounts(.standard));
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 10_000, 25_000, 50_000 }, eventScaleCounts(.stress));
 }
 
 test "benchmark table formatters keep compact text" {

@@ -19,16 +19,8 @@ pub const group = suite.BenchmarkGroup{
     .runCase = runCase,
 };
 
-const quick_counts = [_]usize{ 1_024, 4_096, 16_384, 65_536 };
-const standard_counts = [_]usize{ 1_024, 4_096, 16_384, 65_536, 262_144 };
-const stress_counts = [_]usize{ 4_096, 16_384, 65_536, 262_144, 1_048_576 };
-
 pub fn defaultItemCounts(profile: suite.Profile) []const usize {
-    return switch (profile) {
-        .quick => &quick_counts,
-        .standard => &standard_counts,
-        .stress => &stress_counts,
-    };
+    return suite.eventScaleCounts(profile);
 }
 
 pub fn createFixture(allocator: std.mem.Allocator, count: usize) !DataSystem {
@@ -163,7 +155,7 @@ test "movement benchmark fixed cases use explicit range controls" {
 }
 
 test "movement benchmark profiles sweep multiple entity counts" {
-    try std.testing.expectEqual(@as(usize, 4), defaultItemCounts(.quick).len);
-    try std.testing.expectEqual(@as(usize, 1_024), defaultItemCounts(.quick)[0]);
-    try std.testing.expectEqual(@as(usize, 65_536), defaultItemCounts(.quick)[3]);
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.quick), defaultItemCounts(.quick));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.standard), defaultItemCounts(.standard));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.stress), defaultItemCounts(.stress));
 }

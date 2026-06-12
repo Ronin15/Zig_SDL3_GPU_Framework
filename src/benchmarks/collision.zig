@@ -26,21 +26,13 @@ pub const sparse_group = suite.BenchmarkGroup{
     .runCase = runSparseCase,
 };
 
-const quick_counts = [_]usize{10_000};
-const standard_counts = [_]usize{ 10_000, 25_000, 50_000 };
-const stress_counts = [_]usize{ 25_000, 50_000 };
-
 const FixtureMode = enum {
     dense,
     sparse,
 };
 
 pub fn defaultItemCounts(profile: suite.Profile) []const usize {
-    return switch (profile) {
-        .quick => &quick_counts,
-        .standard => &standard_counts,
-        .stress => &stress_counts,
-    };
+    return suite.eventScaleCounts(profile);
 }
 
 pub fn createFixture(allocator: std.mem.Allocator, count: usize) !DataSystem {
@@ -224,10 +216,7 @@ test "collision benchmark tiny serial case runs without display" {
 }
 
 test "collision benchmark profiles cover high-throughput target counts" {
-    try std.testing.expectEqual(@as(usize, 1), defaultItemCounts(.quick).len);
-    try std.testing.expectEqual(@as(usize, 10_000), defaultItemCounts(.quick)[0]);
-    try std.testing.expectEqual(@as(usize, 3), defaultItemCounts(.standard).len);
-    try std.testing.expectEqual(@as(usize, 50_000), defaultItemCounts(.standard)[2]);
-    try std.testing.expectEqual(@as(usize, 2), defaultItemCounts(.stress).len);
-    try std.testing.expectEqual(@as(usize, 50_000), defaultItemCounts(.stress)[1]);
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.quick), defaultItemCounts(.quick));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.standard), defaultItemCounts(.standard));
+    try std.testing.expectEqualSlices(usize, suite.eventScaleCounts(.stress), defaultItemCounts(.stress));
 }

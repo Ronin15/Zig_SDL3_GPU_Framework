@@ -150,12 +150,14 @@ test "runtime asset catalog starts with unloaded status" {
 }
 
 test "missing startup sprite marks id unavailable without requiring renderer access" {
+    const cache_testing = @import("cache.zig").testing;
     var runtime_assets = RuntimeAssets.init();
     const asset_store = AssetStore.init(std.testing.allocator, std.testing.io, "assets");
-    var cache: AssetCache = undefined;
-    var renderer: Renderer = undefined;
+    var fake = cache_testing.Backend{};
+    var cache = cache_testing.initCache(std.testing.allocator, asset_store);
+    defer cache_testing.deinitCache(&cache, &fake);
 
-    try runtime_assets.preloadSprite(asset_store, &cache, &renderer, .{
+    try preloadSpriteWithTestBackend(&runtime_assets, asset_store, &cache, &fake, .{
         .id = .demo_tile,
         .path = "missing/nope.png",
     });
@@ -327,7 +329,6 @@ fn preloadSpriteWithTestBackend(
         asset_store.allocator.free(path);
     } else |err| switch (err) {
         error.FileNotFound => {
-            log.warn("startup sprite asset unavailable \"{s}\": {}", .{ spec.path, err });
             releaseSpriteSlotWithTestBackend(runtime_assets, cache, fake, index);
             runtime_assets.sprite_slots[index].status = .unavailable;
             return;
